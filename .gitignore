@@ -1,0 +1,25 @@
+# Build output
+/build/
+/out/
+CMakeUserPresets.json
+
+# Visual Studio
+.vs/
+*.user
+
+# Release files are published on the Releases page, not in the repository
+*.zip
+
+# Never part of the repository: the Steamworks SDK and files of the game
+/steamworks_sdk*/
+metro.exe
+*.vfx
+*.vfi
+
+# The work of taking the game apart: notes, dumps, pictures of test runs, saves, other people's projects
+/re/
+/tools/re/
+__pycache__/
+
+# What the mod writes next to the game
+metronet.log

@@ -1,0 +1,39 @@
+#include "@CMAKE_SOURCE_DIR@/src/launcher/res.h"
+
+// (no language of their own: found whatever Windows speaks, and replaceable in tests)
+LANGUAGE 0, 0
+
+IDI_APP ICON "@CMAKE_SOURCE_DIR@/src/launcher/assets/launcher.ico"
+
+// The mod inside (package.cpp): its description, the list of its files, the files.
+RES_PKG_INFO RCDATA "@LAUNCHER_RELEASE_JSON@"
+RES_PKG_INDEX RCDATA "@CMAKE_BINARY_DIR@/package-index.txt"
+301 RCDATA "@PAYLOAD_DIR@/dinput8.dll"
+302 RCDATA "@PAYLOAD_DIR@/metronet.asi"
+@PKG_STEAM_RC@
+304 RCDATA "@PAYLOAD_DIR@/metronet.ini"
+305 RCDATA "@PAYLOAD_DIR@/metronet-README.md"
+
+1 VERSIONINFO
+FILEVERSION @LAUNCHER_VERSION_COMMAS@,0
+PRODUCTVERSION @LAUNCHER_VERSION_COMMAS@,0
+FILEOS 0x40004L
+FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "metronet - Metro 2033 Redux online co-op mod, its launcher and installer"
+      VALUE "ProductName", "metronet"
+      VALUE "FileVersion", "@LAUNCHER_VERSION@"
+      VALUE "ProductVersion", "@LAUNCHER_VERSION@ (mod @MOD_VERSION@)"
+      VALUE "OriginalFilename", "metronet-launcher.exe"
+      VALUE "LegalCopyright", "MIT License. Unofficial fan mod."
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END
