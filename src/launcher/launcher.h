@@ -22,7 +22,7 @@
 namespace lz {
 
 constexpr int kW = 960, kH = 600;  // the window, in units of 1/96 inch
-constexpr wchar_t kLauncherVersion[] = L"1.0.0";
+constexpr wchar_t kLauncherVersion[] = L"1.1.0";
 constexpr wchar_t kRepoUrl[] = L"https://github.com/int3re/METRO-2033-REDUX-COOP";
 constexpr wchar_t kRepoText[] = L"github.com/int3re/METRO-2033-REDUX-COOP";
 
@@ -55,7 +55,7 @@ struct Settings {
   std::wstring game_dir;
   bool auto_check = true;
   bool auto_self = true;     // a newer launcher on GitHub takes this one's place at the start, by itself
-  bool auto_install = false;
+  bool auto_install = true;  // a newer mod on GitHub is installed at the start without a question (since 1.1.0)
   std::wstring self_skip;    // a launcher version that could not take this one's place: not tried by itself again
   bool close_on_play = true;
   int proxy = 0;  // 0 automatic, 1 none, 2 the address below

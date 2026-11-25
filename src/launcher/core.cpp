@@ -517,7 +517,10 @@ void load_settings(Settings& s) {
   std::wstring f = settings_file();
   s.game_dir = ini_get(f, L"launcher", L"game_dir");
   s.auto_check = ini_get(f, L"launcher", L"auto_check", L"1") != L"0";
-  s.auto_install = ini_get(f, L"launcher", L"auto_install", L"0") == L"1";
+  s.auto_install = ini_get(f, L"launcher", L"auto_install", L"1") == L"1";
+  // 1.0.0 wrote auto_install = 0 for everybody (nobody chose it): since 1.1.0 starting the launcher updates
+  // everything by itself, so that old "0" becomes "1" once; a choice made in 1.1.0 or later stays
+  if (_wtoi(ini_get(f, L"launcher", L"settings", L"1").c_str()) < 2) s.auto_install = true;
   s.auto_self = ini_get(f, L"launcher", L"auto_self", L"1") != L"0";
   s.self_skip = ini_get(f, L"launcher", L"self_skip");
   s.close_on_play = ini_get(f, L"launcher", L"close_on_play", L"1") != L"0";
@@ -548,6 +551,7 @@ void save_settings(const Settings& s) {
   }
   ini_set(f, L"launcher", L"game_dir", s.game_dir);
   ini_set(f, L"launcher", L"auto_check", s.auto_check ? L"1" : L"0");
+  ini_set(f, L"launcher", L"settings", L"2");
   ini_set(f, L"launcher", L"auto_install", s.auto_install ? L"1" : L"0");
   ini_set(f, L"launcher", L"auto_self", s.auto_self ? L"1" : L"0");
   ini_set(f, L"launcher", L"self_skip", s.self_skip);

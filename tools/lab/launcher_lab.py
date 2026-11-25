@@ -12,7 +12,7 @@ pointer and the keyboard are not touched, no prompt of Windows is raised, the ga
 "GitHub" is tools/lab/launcher_feed.py on 127.0.0.1.
 
 Scenarios: where, install, keep-ini, settings, bare-ini, uninstall, window-install, wrong-build, pick,
-by-hand, steam, window, graphics, controls, cfg-guard, no-release, no-answer, update, bad-sum, self-update,
+by-hand, steam, window, graphics, controls, cfg-guard, no-release, no-answer, update, bad-sum, old-settings, self-update,
 game-open, pictures. A line "ok" or "FAIL" for every check; the exit code is the number of failed checks.
 """
 import ctypes
@@ -126,7 +126,7 @@ def log_of(name):
 
 
 def drive(name, script, game=GAME, repo=None, auto_self=False, auto_check=True, pick=None, steam=1, running=0, userdir=USER,
-          next_script=None, timeout=90, ends=1, may_miss=False):
+          next_script=None, timeout=90, ends=1, may_miss=False, old_settings=False):
     """A hidden run of the launcher under a script; its log. `ends`: how many launchers are to end (a
     self-update starts a second one in the first one's place). may_miss: a step that finds nothing to press
     is what the scenario is about."""
@@ -135,8 +135,8 @@ def drive(name, script, game=GAME, repo=None, auto_self=False, auto_check=True, 
         if os.path.exists(f):
             os.remove(f)
     io.open(ini, "w", encoding="utf-16").write(
-        "[launcher]\ngame_dir=%s\nauto_check=%d\nauto_self=%d\nauto_install=0\nclose_on_play=0\nproxy=1\n" %
-        (game, 1 if auto_check else 0, 1 if auto_self else 0))
+        "[launcher]\n%sgame_dir=%s\nauto_check=%d\nauto_self=%d\nauto_install=0\nclose_on_play=0\nproxy=1\n" %
+        ("" if old_settings else "settings=2\n", game, 1 if auto_check else 0, 1 if auto_self else 0))
     args = ["--drive", script, "--settings", ini, "--cache", os.path.join(WORK, "cache"), "--out", log, "--userdir", userdir]
     if steam is not None:  # (None: the launcher looks at this PC's processes itself)
         args += ["--steam", str(steam)]
@@ -702,7 +702,7 @@ def reset_mod():
 def s_update():
     print("update: a newer mod comes inside a newer launcher from the local feed")
     newer = "0.%d.%d" % (int(MOD_VERSION.split(".")[1]) + 1, 0)
-    made = launcher_newer.main(BUILT, FEED, newer, "1.0.1")
+    made = launcher_newer.main(BUILT, FEED, newer, "1.1.1")
     feed = launcher_feed.Feed(FEED, "release")
     fresh_app()
     ini = read(os.path.join(GAME, "metronet.ini"))
@@ -713,10 +713,27 @@ def s_update():
     check("it downloads the release's launcher and checks it", ("job: install %s from GitHub" % newer) in text and "downloaded 100%" in text)
     check("the mod in the game folder is %s now (%s)" % (newer, installed_version(GAME)), installed_version(GAME) == newer)
     check("then: ready on %s" % newer, len(st) == 2 and "screen ready" in st[1] and ("mod %s " % newer) in st[1])
-    check("the launcher's own file became the release's (1.0.1)", sha(MINE) == made["sha256"] and "launcher replaced by 1.0.1" in text)
+    check("the launcher's own file became the release's (1.1.1)", sha(MINE) == made["sha256"] and "launcher replaced by 1.1.1" in text)
     check("the player's metronet.ini was not touched by the update", read(os.path.join(GAME, "metronet.ini")) == ini)
     feed.stop()
     return newer
+
+
+def s_old_settings():
+    print("old-settings: the settings 1.0.0 wrote (auto_install = 0, nobody chose it): a newer mod installs by itself")
+    newer = "0.%d.%d" % (int(MOD_VERSION.split(".")[1]) + 1, 0)
+    launcher_newer.main(BUILT, FEED, newer, "1.1.1")
+    feed = launcher_feed.Feed(FEED, "release")
+    fresh_app()
+    reset_mod()
+    text = drive("old-settings", "until:ready:60000;state;quit", repo=feed.url, old_settings=True)
+    st = states(text)
+    check("no press: the launcher installs %s by itself (%s)" % (newer, installed_version(GAME)),
+          installed_version(GAME) == newer and ("job: install %s from GitHub" % newer) in text and "click:" not in text)
+    check("then: ready on %s" % newer, bool(st) and "screen ready" in st[-1] and ("mod %s " % newer) in st[-1])
+    ini = io.open(os.path.join(WORK, "old-settings.ini"), encoding="utf-16").read()
+    check("its settings say so from now on (settings=2, auto_install=1)", "settings=2" in ini and "auto_install=1" in ini)
+    feed.stop()
 
 
 def s_bad_sum(newer):
@@ -739,16 +756,16 @@ def s_bad_sum(newer):
 
 def s_self_update():
     print("self-update: a newer launcher with the same mod takes this one's place at the start")
-    made = launcher_newer.main(BUILT, FEED, MOD_VERSION, "1.0.1")
+    made = launcher_newer.main(BUILT, FEED, MOD_VERSION, "1.1.1")
     feed = launcher_feed.Feed(FEED, "release")
     fresh_app()
     reset_mod()
     text = drive("self-update", "wait:60000;quit", repo=feed.url, auto_self=True, next_script="until:ready:30000;wait:1500;state;quit",
                  timeout=120, ends=2)
-    check("the launcher downloads the newer launcher by itself", "job: a newer launcher, 1.0.1" in text and "launcher replaced by 1.0.1" in text)
+    check("the launcher downloads the newer launcher by itself", "job: a newer launcher, 1.1.1" in text and "launcher replaced by 1.1.1" in text)
     check("its file is the release's now", sha(MINE) == made["sha256"])
     check("the newer launcher is started in its place and goes no further",
-          "restart: the newer launcher is started" in text and "started by launcher 1.0.0 in its place" in text and
+          "restart: the newer launcher is started" in text and "started by launcher 1.1.0 in its place" in text and
           text.count("job: a newer launcher") == 1)
     st = states(text)
     check("the mod was not touched: ready on %s (%s)" % (MOD_VERSION, st[-1].split(" | ")[0]),
@@ -848,6 +865,8 @@ def main():
         newer = s_update()
         if wanted("bad-sum"):
             s_bad_sum(newer)
+    if wanted("old-settings"):
+        s_old_settings()
     if wanted("self-update"):
         s_self_update()
     if wanted("game-open"):
