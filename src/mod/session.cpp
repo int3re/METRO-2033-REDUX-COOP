@@ -15,6 +15,8 @@
 #include "mod/hud.h"
 #include "mod/link.h"
 #include "mod/menu.h"
+#include "mod/loot.h"
+#include "mod/motions.h"
 #include "mod/net.h"
 #include "mod/patch.h"
 #include "mod/players.h"
@@ -515,6 +517,10 @@ void install(const Config& cfg) {
   steamnet::install(cfg);
   players::install(cfg);
   revive::install(cfg);
+  motions::install(cfg);
+  engine::on_tick(&motions::tick);
+  loot::install(cfg);
+  engine::on_tick(&loot::tick);
   engine::on_log(&on_log);
   engine::on_tick(&tick);
   engine::on_tick(&net::frame);

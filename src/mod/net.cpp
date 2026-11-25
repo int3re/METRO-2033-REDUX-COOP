@@ -18,6 +18,7 @@
 #include "common/log.h"
 #include "mod/game.h"
 #include "mod/link.h"
+#include "mod/loot.h"
 #include "mod/patch.h"
 #include "mod/steamnet.h"
 
@@ -476,6 +477,7 @@ using ActorTakeFn = void* (*)(uint8_t*, uint8_t*, uint8_t*);
 ActorTakeFn g_actor_take = nullptr;
 
 void* on_actor_take(uint8_t* actor, uint8_t* child, uint8_t* flags) {
+  loot::lab_on_take(actor, child, flags);
   bool copy = actor && child && (*reinterpret_cast<uint32_t*>(child + game::kEntityFlags) & 0x10000);
   if (g_cloning && g_spawning_slot > 0 && actor && child) {  // (a player's body only, as above)
     uint16_t id = *reinterpret_cast<uint16_t*>(child + game::kEntityId);
@@ -1274,6 +1276,7 @@ int64_t on_gone_event(void* x, uint8_t* event) {
     LOGD("net: [trace] the host's word: %u entities are gone (thread %lu, the frame's thread %lu)", event[4] & 0x7F,
          GetCurrentThreadId(), g_main_thread.load());
   }
+  loot::filter_gone(event);
   return g_gone_event(x, event);
 }
 

@@ -1,4 +1,6 @@
 #include "mod/menu.h"
+#include "mod/loot.h"
+#include "mod/motions.h"
 #include "mod/revive.h"
 #include "mod/hud.h"
 #include "mod/lab.h"
@@ -743,6 +745,40 @@ void own_command(const std::string& cmd) {
   }
   if (!cmd.compare(0, 6, "!mark ")) {  // a line for the test scripts to find their place in the log
     LOGI("lab: mark %s", cmd.c_str() + 6);
+    return;
+  }
+  if (!cmd.compare(0, 6, "!play ")) {  // !play <id hex> <motion name>: a thing starts a motion on this PC
+    unsigned id = 0;
+    char motion[96] = {};
+    if (sscanf(cmd.c_str() + 6, "%x %95s", &id, motion) >= 1) engine::on_main([id, m = std::string(motion)] { motions::lab_play(id, m); });
+    return;
+  }
+  if (!cmd.compare(0, 10, "!motionof ")) {  // !motionof <id hex>: the motion started last on a thing here
+    unsigned id = 0;
+    if (sscanf(cmd.c_str() + 10, "%x", &id) == 1) engine::on_main([id] { motions::lab_state(id); });
+    return;
+  }
+  if (!cmd.compare(0, 6, "!take ")) {  // !take <id hex>: this PC's player takes a thing (its own "use")
+    unsigned id = 0;
+    int kind = 0;
+    if (sscanf(cmd.c_str() + 6, "%x %d", &id, &kind) >= 1) engine::on_main([id, kind] { loot::lab_take(id, kind); });
+    return;
+  }
+  if (!cmd.compare(0, 9, "!cantake ")) {
+    unsigned id = 0;
+    if (sscanf(cmd.c_str() + 9, "%x", &id) == 1) engine::on_main([id] { loot::lab_can_take(id); });
+    return;
+  }
+  if (!cmd.compare(0, 6, "!takes")) {  // !takes <s>: log who hangs things on whom and what inventories take
+    unsigned s = 60;
+    sscanf(cmd.c_str() + 6, "%u", &s);
+    loot::lab_trace(s);
+    return;
+  }
+  if (!cmd.compare(0, 8, "!motions")) {  // !motions <s>: log the motions things start, with who started them
+    unsigned s = 60;
+    sscanf(cmd.c_str() + 8, "%u", &s);
+    motions::lab_trace(s);
     return;
   }
   if (!cmd.compare(0, 8, "!actions")) {

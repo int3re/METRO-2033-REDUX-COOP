@@ -19,6 +19,9 @@ struct Config {
                                  // friend's name>", "steam:<lobby number>"
   bool net_revive = true;        // [net] revive: a player who would die falls, a teammate raises them; the checkpoint
                                  // only when everybody is down (0: death as in single player)
+  bool net_loot = true;          // [net] loot: what one player takes (ammunition, medkits, filters), every player gets
+  bool net_motions = true;       // [net] motions: the host's things (doors a character opens, gates, levers) move alike
+                                 //   on every PC
   bool net_names = true;         // [net] names: the other players' names float over their heads
   bool net_steam = true;         // [net] steam: the game goes through Steam too, under Spacewar (0: Steam is never touched)
   std::string net_name;          // [net] name: this player's name for the others when Steam is not there (UTF-8)

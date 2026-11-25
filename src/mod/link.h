@@ -31,6 +31,11 @@ enum Type : uint8_t {
   kUseKey = 9,
   kDowned = 10,  // a player is down (1) / up again (0): {u8 slot; u8 down} - from that player's PC; the host tells all
   kRevive = 11,  // a player raised a fallen one: {u8 slot raised; u8 by}
+  // Since 0.4.0: the motions the host's things started (doors a story character opens, gates, levers): {u8 count;
+  // {u16 id; u32 name hash; u16 motion; u16 part; float speed; float time; u8 looped; u8 raw}[count]} - to the
+  // joined games; kMotionsAsk (empty): a joined game whose level runs asks for all of the level's so far.
+  kMotions = 12,
+  kMotionsAsk = 13,
 };
 
 void install();

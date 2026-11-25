@@ -45,6 +45,8 @@ add_library(metronet MODULE
   src/mod/hud.cpp
   src/mod/menu.cpp
   src/mod/revive.cpp
+  src/mod/motions.cpp
+  src/mod/loot.cpp
   src/mod/lab.cpp)
 target_include_directories(metronet PRIVATE src)
 target_compile_definitions(metronet PRIVATE ${OUR_DEFS})

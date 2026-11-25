@@ -26,8 +26,8 @@ std::string g_seen;                              // every engine line, for count
 std::string g_last_line;                         // the engine line written last
 unsigned g_repeats = 0;                          // how many times it came again since
 
-void (*g_log_listeners[4])(const char*) = {};
-void (*g_tickers[4])() = {};
+void (*g_log_listeners[16])(const char*) = {};
+void (*g_tickers[16])() = {};
 
 void on_log_line(const char* line) {
   if (line) {
@@ -128,6 +128,7 @@ void on_log(void (*fn)(const char*)) {
       slot = fn;
       return;
     }
+  LOGE("engine: no room for another log listener");
 }
 
 void on_tick(void (*fn)()) {
@@ -136,6 +137,7 @@ void on_tick(void (*fn)()) {
       slot = fn;
       return;
     }
+  LOGE("engine: no room for another tick");
 }
 
 bool ready() { return g_ready.load(); }

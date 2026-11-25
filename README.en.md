@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version 0.3.1" src="https://img.shields.io/badge/version-0.3.1-E07A1F">
+  <img alt="version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-E07A1F">
   <img alt="state: trial build" src="https://img.shields.io/badge/state-trial%20build-8a2b1d">
   <img alt="Windows 10/11, 64-bit" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078d4">
   <img alt="tested: 2–3 players" src="https://img.shields.io/badge/tested-2–3%20players-4BCB3C">
@@ -98,7 +98,11 @@ copied into the game folder next to `metro.exe`.
   gear: three guns, ammunition, grenades, medkits. They shoot, reload and change weapons themselves.
 - **A shared world.** A joined player's bullets hurt and kill enemies; the level's scripts act on everyone; doors,
   levers, wheels, cabinets and talks that one player "used" happen on every PC; the handcar runs the same, the
-  joined player sits beside the leading one.
+  joined player sits beside the leading one; doors, gates and whatever moves in the level move for the
+  joined players as for the leading one (a door a story character opens too).
+- **Each player's own loot.** Everyone picks up for themselves: what one player took - ammunition, medkits,
+  filters, a weapon from a stash - stays in place for the others until they take it. An enemy's weapon is one for
+  all: who takes it first has it.
 - **Level changes.** The leading player changes levels, the others follow by themselves and get new bodies.
 - **Wounded, not killed.** A player who would die falls badly wounded: cannot walk or shoot and waits for a
   teammate, who holds Use next to them for three seconds to raise them. When everybody is down, the last checkpoint
@@ -116,7 +120,8 @@ The full list with the known faults is in [dist/README.md](dist/README.md) (Russ
 **The first real game** (0.3.0, two people on two PCs through real Steam): the friend joined the host from the
 main menu and the session ran. What it found is fixed in 0.3.1: cabinets and gate wheels did not open for the
 second player, after the host left the friend's game stood on a blurred picture, the host's death menu paused the
-game. Not done yet from that list: loot of its own for every player, and doors opened by story characters.
+game (0.3.1); a door a story character opened stayed shut for the friend, loot went to one player only, and a
+joined player got nothing they picked up (0.4.0).
 
 The build is an early one, and it has been tested only automatically: two and three copies of the game on one PC,
 driven by a script, with pictures of the frames each game draws.
@@ -127,14 +132,15 @@ leading player loading a checkpoint, leaving and coming back, three players.
 
 **Not tested:**
 
-- 0.3.1 in a real game: its fixes are tested automatically, not by people yet;
+- 0.3.1 and 0.4.0 in a real game: their fixes are tested automatically, not by people yet. The lab tests a joined
+  player's take with the "take" event its copy sends, not with a button (its window is never the active one); an
+  enemy's weapon taken by one player was not tested in the lab;
 - keyboard and mouse play in a session (the tests drive the game with a scripted gamepad);
 - two real PCs over a real network;
 - playing levels beyond their first minutes;
 - more than three players (the engine has room for 32).
 
-**Not sent between the players yet:** lifts, things moved by physics, items picked up from the floor, vehicles
-other than handcars.
+**Not sent between the players yet:** lifts, things moved by physics, vehicles other than handcars.
 
 **Not there yet:** an item of its own in the main menu (in Redux that menu is a 3D scene — labels on the things
 of a desk); the mod asks through the game's window once a friend is playing.
