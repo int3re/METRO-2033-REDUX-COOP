@@ -86,9 +86,10 @@ look is its own, after the game's interface; it holds no files or art of the gam
   <img src="docs/img/launcher-main.png" alt="The metronet launcher" width="820">
 </p>
 
-There is no release yet: the first one will appear on the [Releases](../../releases) page when build 0.3.0 has
-passed its tests. Until then the mod is built from source (below); the four files of `build/dist/Release` are
-copied into the game folder next to `metro.exe`.
+Download: [`metronet-launcher.exe` of the latest release](../../releases/latest) - run it, pick the game folder if
+the launcher did not find it, and press INSTALL. From then on the launcher asks GitHub at every start: a newer
+launcher takes the old one's place and a newer mod is installed without a question (this can be turned off on the
+LAUNCHER station). Building the mod from source - below.
 
 ## What the mod does
 
