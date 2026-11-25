@@ -101,6 +101,7 @@ bool load_config(const std::wstring& path, Config& cfg) {
   cfg.net_missing_target = get_int(path, L"net", L"missing_target", 1) != 0;
   cfg.net_steam = get_int(path, L"net", L"steam", 1) != 0;
   cfg.net_names = get_int(path, L"net", L"names", 1) != 0;
+  cfg.net_revive = get_int(path, L"net", L"revive", 1) != 0;
   cfg.net_name = get_text(path, "net", "name");
   if (cfg.net_name.size() > 48) cfg.net_name.resize(48);
   // No address: a Steam friend's game (before 0.2.0 the mode was simply off).

@@ -91,10 +91,14 @@ checks = []
 checks.append(("both games ended by themselves", codes == [0, 0], str(codes)))
 bad = [c.name for c in (host, client) if has(c, "CRASH ")]
 checks.append(("no crash", not bad, ", ".join(bad)))
-checks.append(("both PCs have the same list of use blocks", same, "host %d, joiner %d, differ at %s" % (len(hb), len(cb), diff[:8])))
-checks.append(("the host's use was fired on the joined PC", has(client, "player 0 used a thing (use block %d" % host_block) and has(client, "fired here too"),
+# (since 0.3.1 a use is named by the thing, not by the block's number: the lists may differ - a joined game makes the
+#  blocks twice, from the level and from the host's save - so this is a note, not a check)
+checks.append(("the lists of use blocks (may differ)", True, "host %d, joiner %d%s" % (len(hb), len(cb), ", same" if same else "")))
+checks.append(("the host's use was fired on the joined PC", has(client, "player 0 used a thing") and has(client, "fired here too")
+               and not has(client, "has no such use block"),
                hb.get(host_block, ("", "?"))[1]))
-checks.append(("the joiner's use was fired on the host's PC", has(host, "player 1 used a thing (use block %d" % client_block) and has(host, "fired here too"),
+checks.append(("the joiner's use was fired on the host's PC", has(host, "player 1 used a thing") and has(host, "fired here too")
+               and not has(host, "has no such use block"),
                hb.get(client_block, ("", "?"))[1]))
 checks.append(("the used things are in the same state on both PCs", agree,
                "; ".join("%X: host %s / joiner %s" % (t, x[:2] if x else None, y[:2] if y else None) for t, x, y in states)[:400]))

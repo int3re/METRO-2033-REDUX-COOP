@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-E07A1F">
+  <img alt="version 0.3.1" src="https://img.shields.io/badge/version-0.3.1-E07A1F">
   <img alt="state: trial build" src="https://img.shields.io/badge/state-trial%20build-8a2b1d">
   <img alt="Windows 10/11, 64-bit" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078d4">
   <img alt="tested: 2–3 players" src="https://img.shields.io/badge/tested-2–3%20players-4BCB3C">
@@ -97,11 +97,12 @@ copied into the game folder next to `metro.exe`.
 - **A character for everyone.** A joined player gets a body — a copy of Artyom — with all of the leading player's
   gear: three guns, ammunition, grenades, medkits. They shoot, reload and change weapons themselves.
 - **A shared world.** A joined player's bullets hurt and kill enemies; the level's scripts act on everyone; doors,
-  levers and talks that one player "used" happen on every PC; the handcar runs the same, the joined player sits
-  beside the leading one.
+  levers, wheels, cabinets and talks that one player "used" happen on every PC; the handcar runs the same, the
+  joined player sits beside the leading one.
 - **Level changes.** The leading player changes levels, the others follow by themselves and get new bodies.
-- **Death.** A joined player who died gets a new body next to the leading player a few seconds later. When the
-  leading player dies, "Load the last checkpoint" reloads the checkpoint for everyone.
+- **Wounded, not killed.** A player who would die falls badly wounded: cannot walk or shoot and waits for a
+  teammate, who holds Use next to them for three seconds to raise them. When everybody is down, the last checkpoint
+  is loaded for everybody.
 - **Players' names** — their Steam names — over their heads and in lines like "… is joining the game", in the
   game's own font.
 - **Repaired faults of the game itself** that stood in the way of network play: a freeze in a long fight (a
@@ -112,12 +113,10 @@ The full list with the known faults is in [dist/README.md](dist/README.md) (Russ
 
 ## Project status
 
-**Build 0.3.0 (joining with no setup):** in the new mode the automatic tests cover two and three players, joining
-on each of the 27 levels and 9 of the suite's 12 scenarios (shooting, level change, death, the handcar, loading a
-checkpoint and others). Three scenarios — "left and came back by restarting the game", "the host walked away before
-the join" and "the joiner was started before the host" — were written for the old mode with roles in the file
-(where they pass) and do not pass in the new mode yet: this is being looked into. With roles in the file (play by
-IP) the whole suite passes.
+**The first real game** (0.3.0, two people on two PCs through real Steam): the friend joined the host from the
+main menu and the session ran. What it found is fixed in 0.3.1: cabinets and gate wheels did not open for the
+second player, after the host left the friend's game stood on a blurred picture, the host's death menu paused the
+game. Not done yet from that list: loot of its own for every player, and doors opened by story characters.
 
 The build is an early one, and it has been tested only automatically: two and three copies of the game on one PC,
 driven by a script, with pictures of the frames each game draws.
@@ -128,8 +127,7 @@ leading player loading a checkpoint, leaving and coming back, three players.
 
 **Not tested:**
 
-- play through real Steam. The Steam connection has been tested only with a software stand-in for Steam; nobody
-  has run it with two real accounts yet;
+- 0.3.1 in a real game: its fixes are tested automatically, not by people yet;
 - keyboard and mouse play in a session (the tests drive the game with a scripted gamepad);
 - two real PCs over a real network;
 - playing levels beyond their first minutes;

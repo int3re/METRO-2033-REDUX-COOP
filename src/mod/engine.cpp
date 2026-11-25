@@ -104,6 +104,24 @@ void on_main(std::function<void()> fn) {
   g_main_pending.store(true);
 }
 
+void to_main_menu() {
+  using Handler = void (*)(void*, void*);
+  // A JOINED game cannot take that way: its "change_map" is "disconnect 1" + a new local game + the map, and the
+  // menu then comes up as a console's title ("press START") and after it as a blurred background with nothing to
+  // press - the friend's frozen screen of 2026-11-25; neither the mark, a key nor START helped (the lab). A joined
+  // game leaves the network game ("disconnect") and loads the menu the way the game itself does at its start
+  // ("map 000"): the menu's desk comes up by itself (re/shots/home40-quit).
+  bool joined = game::ref<uintptr_t>(game::kNetHost) > 1 && game::ref<int>(game::kNetLocalPlayer) != 0;
+  LOGI("engine: back to the main menu (%s)", joined ? "a joined game: out of the network game, then the menu as at the start"
+                                                     : "the game's own way");
+  if (joined) {
+    command("disconnect", false);
+    command("map 000", false);
+    return;
+  }
+  reinterpret_cast<Handler>(game::at(0x666B70))(nullptr, nullptr);
+}
+
 void on_log(void (*fn)(const char*)) {
   for (auto& slot : g_log_listeners)
     if (!slot) {

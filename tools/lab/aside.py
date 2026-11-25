@@ -28,7 +28,7 @@ def opt(name, default=None):
 
 
 level = opt("--level", r"2033\l19_defence")
-seconds = int(opt("--seconds", "85"))
+seconds = int(opt("--seconds", "110"))  # (85 left no time after a join that took 30 s)
 show = opt("--show")
 
 require_memory(2)

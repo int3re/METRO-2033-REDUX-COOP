@@ -23,6 +23,10 @@ Checks:
 Pictures of both sides go to re/shots/hostdeath/.
 """
 import os, re, shutil, sys
+
+# This is the game's own death (its menu, "load the last checkpoint"): with the fall-and-raise of 0.3.1 a player
+# does not die of a nosalis in a session - revive.py tests that. Here it is off.
+os.environ["METRONET_NET"] = (os.environ.get("METRONET_NET", "") + ";revive = 0").strip(";")
 from lab import Copy, wait, require_memory, shots, sheet, REPO
 
 a = sys.argv[1:]

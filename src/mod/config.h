@@ -17,6 +17,8 @@ struct Config {
   NetMode net_mode = NetMode::Auto;
   std::string net_address;       // join: the host's IP address, or "steam" (a Steam friend's game), "steam:<a part of the
                                  // friend's name>", "steam:<lobby number>"
+  bool net_revive = true;        // [net] revive: a player who would die falls, a teammate raises them; the checkpoint
+                                 // only when everybody is down (0: death as in single player)
   bool net_names = true;         // [net] names: the other players' names float over their heads
   bool net_steam = true;         // [net] steam: the game goes through Steam too, under Spacewar (0: Steam is never touched)
   std::string net_name;          // [net] name: this player's name for the others when Steam is not there (UTF-8)

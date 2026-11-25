@@ -16,7 +16,9 @@
 #include "mod/link.h"
 #include "mod/menu.h"
 #include "mod/net.h"
+#include "mod/patch.h"
 #include "mod/players.h"
+#include "mod/revive.h"
 #include "mod/steamnet.h"
 
 namespace session {
@@ -35,7 +37,6 @@ std::atomic<uint32_t> g_waiting_seq{0};  // "mapstate_loaded_and_waiting"
 std::atomic<uint32_t> g_save_bin_seq{0}; // "load save bin": the quick save's objects are in
 std::atomic<uint32_t> g_incoming_seq{0}; // "[net] incoming connection"
 std::atomic<uint32_t> g_change_seq{0};   // "change_map_cl": the host went on to the next level, this game follows
-std::atomic<uint32_t> g_lost_seq{0};     // "menu 'mp_game_disconnect' is missing": the engine has given the host up
 std::atomic<bool> g_quitting{false};     // the game is closing ("quit"): nothing is started any more
 
 void on_log(const char* line) {
@@ -57,8 +58,6 @@ void on_log(const char* line) {
     ++g_incoming_seq;
   } else if (strstr(line, "change_map_cl")) {
     ++g_change_seq;
-  } else if (strstr(line, "mp_game_disconnect")) {
-    ++g_lost_seq;
   } else if (!strncmp(line, "^quit", 5)) {
     g_quitting.store(true);
   }
@@ -132,7 +131,9 @@ void host_tick(uint64_t now) {
         LOGD("session: player %u health here %.3f -> %.3f", i, seen[i], health);
         seen[i] = health;
       }
-      if (!g_dead_since[i] && health > -999.f && health <= kDeadHealth) {
+      if (revive::downed(static_cast<int>(i))) {
+        g_dead_since[i] = 0;  // down, not dead: a teammate may raise them (revive.cpp)
+      } else if (!g_dead_since[i] && health > -999.f && health <= kDeadHealth) {
         g_dead_since[i] = now;
         LOGI("session: player %u died (health %.3f here), a new body in %llu s", i, health,
              static_cast<unsigned long long>(kRespawnMs / 1000));
@@ -157,6 +158,23 @@ void host_tick(uint64_t now) {
       net::spawn_body(static_cast<int>(i));
     }
   }
+}
+
+// --- the host is gone -------------------------------------------------------------------------------------------
+// A joined game whose host went away: the engine's own answer (exe+6952E0, from its network events) closes EVERY
+// page of the game's interface and then opens its old multiplayer's page "mp_game_disconnect", which the game does
+// not have. With every page closed, the main menu the game goes back to stays a blurred background with nothing to
+// press (the friend's frozen screen, 2026-11-25). The mod takes that over: the engine's answer is not run, and the
+// session goes back to the main menu itself.
+constexpr uintptr_t kHostGone = 0x6952E0;
+using HostGoneFn = void (*)(void*);
+HostGoneFn g_host_gone = nullptr;
+std::atomic<uint32_t> g_lost_seq{0};     // the engine has given the host up
+
+void on_host_gone(void* self) {
+  LOGI("session: the engine says the host is gone (its own page for it is left out)");
+  ++g_lost_seq;
+  (void)self;
 }
 
 // --- the joiner ---------------------------------------------------------------------------------------------
@@ -300,8 +318,48 @@ bool in_story() { return !g_loading.load() && game::ref<void*>(game::kLevel) && 
 
 void on_yes() { g_yes_lobby = g_asked_lobby; }
 
+// --- back in the main menu after a session -------------------------------------------------------------------------
+// When a session ends - the player left it, or the host's game went away - the game loads its main menu, and the
+// menu waits for "press any key" like at the game's start. A friend whose host had quit was stuck right there
+// (2026-11-25, the first real game: the line "Хост завершил игру", a still picture, no key did anything). So after
+// a session the menu is let in by the mod itself, and a pause of the loader left on the engine's stack (the same
+// one that stops a joined level's clock) is taken off once it runs.
+bool g_back_to_menu = false;
+uint64_t g_menu_waits_since = 0;
+std::string g_last_level;
+
+void back_to_menu_tick(uint64_t now, bool in_session) {
+  std::string lvl = level();
+  if (in_session && lvl == kMenuLevel && g_last_level != kMenuLevel && !g_last_level.empty() && !g_back_to_menu) {
+    LOGI("session: on the way back to the main menu (from %s)", g_last_level.c_str());
+    g_back_to_menu = true;
+    g_menu_waits_since = 0;
+  }
+  g_last_level = lvl;
+  if (!g_back_to_menu) return;
+  // (the engine's "loading" lasts until the map runs: a map that waits for its key is still "loading" here)
+  if (lvl != kMenuLevel || !game::ref<void*>(game::kLevel)) {
+    g_menu_waits_since = 0;
+    return;
+  }
+  if (game::ref<int>(game::kMapState) == 2) {  // loaded, waiting for a key
+    if (!g_menu_waits_since) g_menu_waits_since = now;
+    if (now - g_menu_waits_since >= 600) {
+      net::log_pauses("the main menu is loaded and waits for a key: the mod lets it in");
+      net::finish_load();
+      g_menu_waits_since = now + 4000;  // once more in a while, if this one did not take
+    }
+  } else if (!g_loading.load() && now - g_running_at.load() > 800) {
+    net::log_pauses("the main menu runs");
+    net::pop_loader_pauses();
+    g_back_to_menu = false;
+    g_menu_waits_since = 0;
+  }
+}
+
 void auto_tick(uint64_t now) {
   if (g_quitting.load()) return;
+  back_to_menu_tick(now, g_auto != Auto::Idle);
   switch (g_auto) {
     case Auto::Idle: {
       bool story = in_story() && now - g_running_at.load() > 2000;
@@ -385,7 +443,7 @@ void auto_tick(uint64_t now) {
         g_going_home = true;
         LOGI("session: the host's game is gone, back to the main menu");
         hud::notice("Хост завершил игру", "The host has ended the game", 10);
-        engine::command(std::string("change_map ") + kMenuLevel, true);
+        engine::on_main([] { engine::to_main_menu(); });
       }
       if ((g_join == Join::Menu || g_join == Join::Connecting) && !steamnet::joining()) over = true;  // that game is gone
       // back in the main menu: the player left the session, or the host went to its menu and this game followed
@@ -423,6 +481,23 @@ void tick() {
   else if (g_cfg.net_mode == Config::NetMode::Join) {
     net::tick();
     join_tick(now);
+    if (g_quitting.load()) return;
+    // The host's game went away (the engine gives the host up and wants a page of its old multiplayer the game
+    // does not have): back to the main menu, from where this game knocks at the host again.
+    if ((g_join == Join::InSession || g_join == Join::Following) && g_lost_seq.load() != g_lost_seen && !g_going_home) {
+      g_going_home = true;
+      g_lost_seen = g_lost_seq.load();
+      LOGI("session: the host's game is gone, back to the main menu");
+      hud::notice("Хост завершил игру", "The host has ended the game", 10);
+      engine::on_main([] { engine::to_main_menu(); });
+    }
+    if (g_going_home && level() == kMenuLevel && level_is_running() && now - g_running_at.load() > 2000) {
+      g_going_home = false;
+      net::set_network_game(false);
+      g_join = Join::Menu;
+      g_join_menu_seq = 0;
+    }
+    back_to_menu_tick(now, g_join != Join::Menu || g_going_home);
   }
 }
 
@@ -435,9 +510,11 @@ void install(const Config& cfg) {
        cfg.net_mode == Config::NetMode::Join ? ", address " : "", cfg.net_mode == Config::NetMode::Join ? cfg.net_address.c_str() : "");
   g_by_steam = steamnet::join_by_steam(cfg);
   g_join_address = cfg.net_address;
+  patch::hook("the host is gone", game::at(kHostGone), reinterpret_cast<void*>(&on_host_gone), reinterpret_cast<void**>(&g_host_gone));
   link::install();
   steamnet::install(cfg);
   players::install(cfg);
+  revive::install(cfg);
   engine::on_log(&on_log);
   engine::on_tick(&tick);
   engine::on_tick(&net::frame);

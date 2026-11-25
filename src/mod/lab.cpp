@@ -1,4 +1,5 @@
 #include "mod/menu.h"
+#include "mod/revive.h"
 #include "mod/hud.h"
 #include "mod/lab.h"
 
@@ -352,6 +353,64 @@ void real_calls(const CONTEXT* c, char* out, size_t cap) {
   }
 }
 
+// --- "!watch <id> <offset>": who writes this field -------------------------------------------------------------
+// A hardware data breakpoint (debug register 0, 4 bytes, on write) on every thread of the game; each write is
+// logged with the writer's call chain (the first 40). New threads made after the command are not watched.
+std::atomic<int> g_watch_hits{0};
+uintptr_t g_watch_at = 0;
+
+LONG WINAPI on_watch(EXCEPTION_POINTERS* ep) {
+  if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP || !g_watch_at || !(ep->ContextRecord->Dr6 & 1))
+    return EXCEPTION_CONTINUE_SEARCH;
+  ep->ContextRecord->Dr6 = 0;
+  // only the writes that lower the value (a float field: the health's regrowth writes it every frame)
+  static float last = 1e30f;
+  float now = *reinterpret_cast<const float*>(g_watch_at);
+  bool lower = now < last - 0.001f;
+  last = now;
+  if (lower && g_watch_hits.fetch_add(1) < 40) {
+    char calls[1024];
+    real_calls(ep->ContextRecord, calls, sizeof(calls));
+    uintptr_t base = game::base();
+    uintptr_t rip = ep->ContextRecord->Rip;
+    LOGI("lab: watch: %llX became %.3f (%08X), written at %s%llX; calls:%s", static_cast<unsigned long long>(g_watch_at), now,
+         *reinterpret_cast<const uint32_t*>(g_watch_at), rip >= base && rip < base + game::kSizeOfImage ? "+" : "?",
+         static_cast<unsigned long long>(rip >= base && rip < base + game::kSizeOfImage ? rip - base : rip), calls);
+  }
+  return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+void watch_address(uintptr_t at) {
+  static PVOID handler = nullptr;
+  if (!handler) handler = AddVectoredExceptionHandler(1, &on_watch);
+  g_watch_at = at;
+  g_watch_hits.store(0);
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+  if (snap == INVALID_HANDLE_VALUE) return;
+  THREADENTRY32 te = {sizeof(te)};
+  int set = 0;
+  DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+  for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+    if (te.th32OwnerProcessID != pid) continue;
+    HANDLE t = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+    if (!t) continue;
+    bool self = te.th32ThreadID == me;
+    if (!self) SuspendThread(t);
+    CONTEXT c = {};
+    c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    if (self ? true : GetThreadContext(t, &c) != 0) {
+      if (self) GetThreadContext(t, &c);
+      c.Dr0 = at;
+      c.Dr7 = (c.Dr7 & ~0xF0003ull) | 1ull | (1ull << 16) | (3ull << 18);  // local 0, on write, 4 bytes
+      if (SetThreadContext(t, &c)) ++set;
+    }
+    if (!self) ResumeThread(t);
+    CloseHandle(t);
+  }
+  CloseHandle(snap);
+  LOGI("lab: watching %llX for writes on %d threads", static_cast<unsigned long long>(at), set);
+}
+
 LONG WINAPI on_crash(EXCEPTION_POINTERS* ep) {
   const EXCEPTION_RECORD* r = ep->ExceptionRecord;
   const CONTEXT* c = ep->ContextRecord;
@@ -498,6 +557,7 @@ DWORD WINAPI on_xinput_get_state(DWORD user, PadState* state) {
   ++g_pad.packet;
   *state = g_pad;
   LeaveCriticalSection(&g_pad_lock);
+  revive::filter_pad(state);
   return ERROR_SUCCESS;
 }
 
@@ -685,6 +745,26 @@ void own_command(const std::string& cmd) {
     LOGI("lab: mark %s", cmd.c_str() + 6);
     return;
   }
+  if (!cmd.compare(0, 8, "!actions")) {
+    unsigned s = 30;
+    sscanf(cmd.c_str() + 8, "%u", &s);
+    revive::lab_actions(s);
+    return;
+  }
+  if (!cmd.compare(0, 7, "!watch ")) {  // !watch <entity id hex, FFFF = own body> <offset hex>
+    unsigned id = 0, offset = 0;
+    if (sscanf(cmd.c_str(), "!watch %x %x", &id, &offset) == 2)
+      engine::on_main([=] {
+        uintptr_t at = net::entity_field(id, offset);
+        if (at) watch_address(at);
+        else LOGI("lab: watch: no entity %X", id);
+      });
+    return;
+  }
+  if (cmd == "!mainmenu") {  // the pause menu's "Exit to the main menu", as the game does it
+    engine::on_main([] { engine::to_main_menu(); });
+    return;
+  }
   if (cmd == "!ask") {  // the game's own yes / no window with a text of the mod's
     menu::ask("Хантер сейчас играет в Metro 2033 Redux. Присоединиться к этой игре?", "Hunter is playing Metro 2033 Redux now. Join this game?",
               [] { LOGI("lab: the answer was yes"); });
@@ -762,6 +842,11 @@ void own_command(const std::string& cmd) {
     engine::on_main([c = static_cast<unsigned>(a), m = n >= 3 ? static_cast<float>(b) : 4.f] { net::lab_bring(c, m); });
   } else if (!strcmp(name, "uses")) {
     engine::on_main([] { net::lab_uses(); });
+  } else if (!strcmp(name, "usename")) {  // !usename <entity name> [k]: the k-th use block (from the end) waiting on it
+    char what[96] = {};
+    unsigned k = 0;
+    if (sscanf(cmd.c_str(), "!usename %95s %u", what, &k) >= 1)
+      engine::on_main([w = std::string(what), k] { net::lab_use_named(w, k); });
   } else if (!strcmp(name, "use") && n >= 2) {
     engine::on_main([id = static_cast<unsigned>(a)] { net::lab_use(id); });
   } else if (!strcmp(name, "world") && n >= 2) {

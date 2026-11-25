@@ -965,8 +965,68 @@ uint8_t* on_use_block_made(uint8_t* block) {
   uint64_t now = GetTickCount64();
   if (now - g_use_block_at > 3000) g_use_blocks.clear();
   g_use_block_at = now;
-  if (made && g_use_blocks.size() < 0xFFFF) g_use_blocks.push_back(made);
+  if (made && g_use_blocks.size() < 0xFFFF) {
+    // a block made where an old one was (its memory given again): the old entry goes
+    for (size_t i = 0; i < g_use_blocks.size(); ++i)
+      if (g_use_blocks[i] == made) {
+        g_use_blocks.erase(g_use_blocks.begin() + static_cast<std::ptrdiff_t>(i));
+        break;
+      }
+    g_use_blocks.push_back(made);
+  }
   return made;
+}
+
+#pragma pack(push, 1)
+struct UseKeyNote {
+  uint8_t from;          // the player slot whose player used it
+  uint16_t user;         // the entity that used it
+  uint8_t n;             // how many target ids follow (0: the block waits on no entity - nth / count decide)
+  uint16_t target[4];    // the entities the block waits on, smallest id first
+  uint16_t nth, count;   // the block's place in the sender's list (only when n == 0, and only if the lists agree)
+  uint8_t from_end;      // which of the blocks that wait on the same entities, counted from the one made last
+                         // (a cabinet has two: one opens it, one takes its things; a joined game may hold the
+                         // blocks of the level and, made later, those of the host's save - the last ones live)
+};
+
+bool use_block_alive(const uint8_t* block);
+int read_targets(uint8_t* block, uint16_t* ids, int max);
+
+// The alive blocks that wait on exactly these entities, in the order they were made.
+std::vector<uint8_t*> blocks_waiting_on(const uint16_t* ids, int n) {
+  std::vector<uint8_t*> out;
+  for (uint8_t* block : g_use_blocks) {
+    if (!use_block_alive(block)) continue;
+    uint16_t got[4];
+    if (read_targets(block, got, 4) == n && !memcmp(got, ids, n * sizeof(uint16_t))) out.push_back(block);
+  }
+  return out;
+}
+#pragma pack(pop)
+
+// The ids of the entities a use block waits on, smallest first; -1 when the block cannot be read (its memory
+// went back to the game: a block of a level that was taken down).
+int read_targets(uint8_t* block, uint16_t* ids, int max) {
+  __try {
+    unsigned n = reinterpret_cast<unsigned (*)(uint8_t*, unsigned)>(game::at(kTargetCount))(block + kBlockTargets, 0);
+    int got = 0;
+    for (unsigned i = 0; i < n && i < 16; ++i) {
+      void* handle = nullptr;
+      reinterpret_cast<void* (*)(void**, uint8_t*, unsigned, unsigned, unsigned)>(game::at(kTargetAt))(&handle, block + kBlockTargets, i, 0, 0);
+      uint8_t* target = handle ? *reinterpret_cast<uint8_t**>(handle) : nullptr;
+      if (target && got < max) ids[got++] = *reinterpret_cast<uint16_t*>(target - game::kEntityHandle + game::kEntityId);
+      if (handle) reinterpret_cast<void (*)(void**)>(game::at(kHandleDrop))(&handle);
+    }
+    for (int i = 1; i < got; ++i)  // smallest first
+      for (int j = i; j > 0 && ids[j] < ids[j - 1]; --j) {
+        uint16_t t = ids[j];
+        ids[j] = ids[j - 1];
+        ids[j - 1] = t;
+      }
+    return got;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -1;
+  }
 }
 
 bool use_block_alive(const uint8_t* block) {
@@ -981,15 +1041,77 @@ void on_use_fired(uint8_t* block, void** user) {
   // only what this PC's own player did is told: a use by a body another PC leads is that PC's to tell
   uint8_t* own = controlled();
   if (!own || user_id != *reinterpret_cast<uint16_t*>(own + game::kEntityId)) return;
-  for (size_t i = 0; i < g_use_blocks.size(); ++i) {
-    if (g_use_blocks[i] != block) continue;
-    UseNote note = {static_cast<uint16_t>(i), static_cast<uint16_t>(g_use_blocks.size()),
-                    static_cast<uint8_t>(game::ref<int>(game::kNetLocalPlayer)), user_id};
-    bool sent = link::send(link::kUse, &note, sizeof(note), true);
-    static int told = 0;
-    if (told++ < 30) LOGI("net: a thing was used here (use block %zu of %zu): %s", i, g_use_blocks.size(), sent ? "the others are told" : "nobody to tell");
+  UseKeyNote note = {};
+  note.from = static_cast<uint8_t>(game::ref<int>(game::kNetLocalPlayer));
+  note.user = user_id;
+  int n = read_targets(block, note.target, 4);
+  note.n = static_cast<uint8_t>(n > 0 ? n : 0);
+  note.nth = 0xFFFF;
+  note.count = static_cast<uint16_t>(g_use_blocks.size());
+  for (size_t i = 0; i < g_use_blocks.size(); ++i)
+    if (g_use_blocks[i] == block) note.nth = static_cast<uint16_t>(i);
+  note.from_end = 0xFF;
+  if (note.n) {
+    std::vector<uint8_t*> same = blocks_waiting_on(note.target, note.n);
+    for (size_t i = 0; i < same.size(); ++i)
+      if (same[i] == block) note.from_end = static_cast<uint8_t>(same.size() - 1 - i);
+  }
+  bool sent = link::send(link::kUseKey, &note, sizeof(note), true);
+  static int told = 0;
+  if (told++ < 40)
+    LOGI("net: a thing was used here (use block %d of %zu, waits on %d: %X %X %X %X): %s", note.nth == 0xFFFF ? -1 : note.nth,
+         g_use_blocks.size(), note.n, note.target[0], note.target[1], note.target[2], note.target[3],
+         sent ? "the others are told" : "nobody to tell");
+}
+
+// A use told by another PC, named by what its block waits on: the block here that waits on the same entities
+// fires (one that is on before one that is off; of equals, the one made last).
+void on_use_key(int, const uint8_t* data, size_t size) {
+  UseKeyNote note;
+  if (size < sizeof(note)) return;
+  memcpy(&note, data, sizeof(note));
+  if (game::ref<int>(game::kNetLocalPlayer) == 0 && link::peers() > 1) link::send(link::kUseKey, data, size, true);  // to the other joined games
+  if (note.from == static_cast<uint8_t>(game::ref<int>(game::kNetLocalPlayer))) return;  // this PC's own use, come back round
+  uint8_t* chosen = nullptr;
+  bool chosen_on = false;
+  int candidates = 0;
+  if (note.n > 0 && note.n <= 4) {
+    std::vector<uint8_t*> same = blocks_waiting_on(note.target, note.n);
+    candidates = static_cast<int>(same.size());
+    if (note.from_end < same.size()) {
+      chosen = same[same.size() - 1 - note.from_end];
+      chosen_on = chosen[kBlockOn] == 1;
+    } else {
+      for (uint8_t* block : same) {  // the last one that is on, else the last one
+        bool on = block[kBlockOn] == 1;
+        if (!chosen || on || !chosen_on) {
+          chosen = block;
+          chosen_on = on;
+        }
+      }
+    }
+  } else if (note.nth < g_use_blocks.size() && note.count == g_use_blocks.size() && use_block_alive(g_use_blocks[note.nth])) {
+    chosen = g_use_blocks[note.nth];
+    candidates = 1;
+  }
+  if (!chosen) {
+    LOGW("net: player %d used a thing (waits on %u: %X %X %X %X), but this PC has no such use block (%zu blocks here): not fired here",
+         static_cast<int>(note.from), note.n, note.target[0], note.target[1], note.target[2], note.target[3], g_use_blocks.size());
     return;
   }
+  uint8_t* user = entity_by_id(note.user);
+  if (!user || !is_player(note.user)) user = controlled();
+  void* handle = user ? *reinterpret_cast<void**>(user + game::kEntityHandle) : nullptr;
+  if (!handle) {
+    LOGW("net: player %d used a thing, but there is no body here to use it with", static_cast<int>(note.from));
+    return;
+  }
+  g_use_replayed = true;
+  g_use_fired(chosen, &handle);
+  g_use_replayed = false;
+  LOGI("net: player %d used a thing (waits on %u: %X %X %X %X; %d such block%s here, the one fired is %s): fired here too",
+       static_cast<int>(note.from), note.n, note.target[0], note.target[1], note.target[2], note.target[3], candidates,
+       candidates == 1 ? "" : "s", chosen_on ? "on" : "off");
 }
 
 void on_use(int, const uint8_t* data, size_t size) {
@@ -1055,6 +1177,37 @@ void lab_uses() {
     LOGI("net:   use block %zu (%s):%s", i, block[kBlockOn] == 1 ? "on" : "off", use_block_things(block).c_str());
   }
   LOGI("net: %zu use blocks, %u of them on", g_use_blocks.size(), on);
+}
+
+void lab_use_named(const std::string& name, unsigned k) {
+  uint8_t* server = game::ref<uint8_t*>(game::kServer);
+  if (!server) return;
+  uint8_t* table = *reinterpret_cast<uint8_t**>(server + game::kServerEntities);
+  unsigned count = *reinterpret_cast<uint16_t*>(server + game::kServerEntityCount);
+  uint16_t id = 0xFFFF;
+  for (unsigned i = 0; i < count && id == 0xFFFF; ++i) {
+    uint8_t* e = *reinterpret_cast<uint8_t**>(table + i * 16 + 8);
+    const uint8_t* str = e ? *reinterpret_cast<uint8_t**>(e + game::kEntityName) : nullptr;
+    if (str && name == reinterpret_cast<const char*>(str) + 0x14) id = *reinterpret_cast<uint16_t*>(e + game::kEntityId);
+  }
+  if (id == 0xFFFF) {
+    LOGI("net: no entity named '%s'", name.c_str());
+    return;
+  }
+  std::vector<uint8_t*> same = blocks_waiting_on(&id, 1);
+  if (k >= same.size()) {
+    LOGI("net: '%s' (%X) has %zu use blocks, no %u-th from the end", name.c_str(), id, same.size(), k);
+    return;
+  }
+  uint8_t* block = same[same.size() - 1 - k];
+  uint8_t* own = controlled();
+  void* handle = own ? *reinterpret_cast<void**>(own + game::kEntityHandle) : nullptr;
+  if (!handle) {
+    LOGI("net: no body to use '%s' with", name.c_str());
+    return;
+  }
+  LOGI("net: the lab uses '%s' (%X): block %u from the end of %zu (%s)", name.c_str(), id, k, same.size(), block[kBlockOn] == 1 ? "on" : "off");
+  on_use_fired(block, &handle);
 }
 
 void lab_use(unsigned n) {
@@ -1263,7 +1416,8 @@ void install(const Config& cfg) {
   if (cfg.net_use) {
     patch::hook("use block made", game::at(kUseBlockMade), reinterpret_cast<void*>(&on_use_block_made), reinterpret_cast<void**>(&g_use_block_made));
     patch::hook("use: fired", game::at(kUseFired), reinterpret_cast<void*>(&on_use_fired), reinterpret_cast<void**>(&g_use_fired));
-    link::on(link::kUse, &on_use);
+    link::on(link::kUse, &on_use);        // from a PC with an older mod
+    link::on(link::kUseKey, &on_use_key);
   }
   if (cfg.net_missing_target)
     patch::hook("client action about an entity", game::at(kClientAboutEntity), reinterpret_cast<void*>(&on_client_about_entity),
@@ -2211,6 +2365,11 @@ void log_body() {
   }
 }
 
+uintptr_t entity_field(unsigned id, unsigned offset) {
+  uint8_t* e = id == 0xFFFF ? controlled() : entity_by_id(static_cast<uint16_t>(id));
+  return e ? reinterpret_cast<uintptr_t>(e + offset) : 0;
+}
+
 void poke_entity(unsigned id, unsigned offset, unsigned size, unsigned value) {
   uint8_t* e = id == 0xFFFF ? controlled() : entity_by_id(static_cast<uint16_t>(id));
   if (!e || (size != 1 && size != 2 && size != 4) || offset > 0x4000) {
@@ -3011,6 +3170,18 @@ void pop_loader_pauses() {
     LOGI("net: taking the leftover pause '%s' off", static_cast<const char*>(found) + 0x14);
     reinterpret_cast<Pop>(game::at(game::kPausePop))(loader, &found);
   }
+}
+
+void log_pauses(const char* why) {
+  uint8_t* loader = reinterpret_cast<uint8_t*>(game::at(game::kLoader));
+  uint16_t n = *reinterpret_cast<uint16_t*>(loader + game::kPauseStack + 0xA);
+  void** stack = *reinterpret_cast<void***>(loader + game::kPauseStack);
+  std::string names;
+  for (int i = 0; i < n && i < 16 && stack; ++i) {
+    if (!names.empty()) names += ", ";
+    names += stack[i] ? static_cast<const char*>(stack[i]) + 0x14 : "?";
+  }
+  LOGI("net: %s; pauses: %s", why, names.empty() ? "none" : names.c_str());
 }
 
 void unpause_all() {

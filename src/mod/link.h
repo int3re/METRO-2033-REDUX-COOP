@@ -25,6 +25,12 @@ enum Type : uint8_t {
   // Since 0.2.0. A PC with an older mod does not know them and leaves them alone, so the protocol's number stays.
   kMyName = 7, // a joined player's name, to the host: UTF-8 bytes, no terminator
   kNames = 8,  // the host's list of who plays: {u8 count; {u8 slot; u8 length; char name[length]}[count]}
+  // Since 0.4.0: a player used a thing, named by the things the use block waits on (their entity ids), not by
+  // the block's number - the PCs' lists of blocks differ (a joined game makes a level's blocks twice: from the
+  // level and from the host's save). {u8 from; u16 user; u8 n; u16 target[4]; u16 nth; u16 count; u8 from_end}
+  kUseKey = 9,
+  kDowned = 10,  // a player is down (1) / up again (0): {u8 slot; u8 down} - from that player's PC; the host tells all
+  kRevive = 11,  // a player raised a fallen one: {u8 slot raised; u8 by}
 };
 
 void install();

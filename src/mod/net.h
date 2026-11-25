@@ -35,6 +35,8 @@ void backup_save();
 void set_network_game(bool on);
 // Main thread. Lets a loaded map start (what a key press on the loading screen does).
 void finish_load();
+// One log line: the names on the engine's pause stack (why: what the moment is).
+void log_pauses(const char* why);
 // Main thread. Takes every pause off the engine's pause stack (a joined game stays paused by its loader).
 void unpause_all();
 // Main thread. Takes the loader's own pauses ("loader", "qloader") off: one of them stays behind after a level
@@ -52,6 +54,8 @@ int add_empty_slot();
 void log_body();
 // The lab: writes `size` bytes (1, 2, 4) of `value` at entity + offset and logs what was there.
 void poke_entity(unsigned id, unsigned offset, unsigned size, unsigned value);
+// The lab: the address of a field of an entity (0xFFFF = the body this PC controls); 0 when there is none.
+uintptr_t entity_field(unsigned id, unsigned offset);
 // The lab, the host: takes one entity out of the world (the game tells the joined players).
 void destroy_entity(unsigned id);
 // The lab, the host: a hit event as a joined player's bullet sends it (attacker, victim, the event's four data
@@ -73,6 +77,9 @@ unsigned long long lab_last_frame();  // lab: GetTickCount64 of the main loop's 
 std::string lab_updating();  // lab, crash log: the entity this thread is updating right now (exe+6B1720)
 void lab_uses();
 void lab_use(unsigned n);
+// The lab: fires, as this PC's player, the use block that waits on the entity with this name - the k-th of such
+// blocks counted from the one made last (a cabinet has two).
+void lab_use_named(const std::string& name, unsigned k);
 void lab_bring(unsigned class_rva, float metres);
 void lab_ride(unsigned id, unsigned platform);  // platform FFFF: off
 void lab_hang(unsigned id, unsigned parent);    // parent FFFF: off

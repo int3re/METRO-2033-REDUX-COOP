@@ -44,11 +44,12 @@ add_library(metronet MODULE
   src/mod/players.cpp
   src/mod/hud.cpp
   src/mod/menu.cpp
+  src/mod/revive.cpp
   src/mod/lab.cpp)
 target_include_directories(metronet PRIVATE src)
 target_compile_definitions(metronet PRIVATE ${OUR_DEFS})
 target_compile_options(metronet PRIVATE ${OUR_OPTS})
-target_link_libraries(metronet PRIVATE minhook ws2_32 user32 shell32 winmm)
+target_link_libraries(metronet PRIVATE minhook ws2_32 user32 shell32 winmm dxguid)
 
 # --- optional: Steam (the Steamworks SDK is never part of the repo) -------------------------------------------
 #   cmake -B build -A x64 -DSTEAMWORKS_SDK_DIR=C:/sdk/steamworks_sdk/sdk

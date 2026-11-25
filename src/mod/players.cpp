@@ -12,6 +12,7 @@
 #include "mod/hud.h"
 #include "mod/link.h"
 #include "mod/net.h"
+#include "mod/revive.h"
 #include "mod/steamnet.h"
 
 namespace players {
@@ -187,7 +188,7 @@ void frame() {
       const uint8_t* slot = p.array + game::kNetPlayerSize * i;
       if (*reinterpret_cast<const uint16_t*>(slot + 0x64) == 0xFFFF) continue;  // no body (yet)
       const float* eyes = reinterpret_cast<const float*>(slot + 0x48);
-      list.push_back({eyes[0], eyes[1] + 0.32f, eyes[2], g_names[i]});
+      list.push_back({eyes[0], eyes[1] + 0.32f, eyes[2], revive::downed(i) ? g_names[i] + " (ранен)" : g_names[i]});
     }
   }
   hud::tags(std::move(list));

@@ -28,6 +28,11 @@ void on_log(void (*fn)(const char* line));
 // `fn` runs on the main thread at every turn of the window message pump.
 void on_tick(void (*fn)());
 
+// Main thread. Back to the main menu. A host or a single player: the way the game's own "Exit to the main menu"
+// goes (its handler "main_menu_handler", exe+666B70, without its question: the mark [exe+D01E50]+0x1DB0 = 1, then
+// "change_map <menu>"). A joined game: "disconnect", then "map 000" as at the game's start (see engine.cpp).
+void to_main_menu();
+
 // The last lines the engine logged that contain `needle` (for the lab's checks), newest last.
 int count_log(const char* needle);
 
