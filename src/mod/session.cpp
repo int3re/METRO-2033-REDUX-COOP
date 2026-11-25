@@ -16,6 +16,7 @@
 #include "mod/link.h"
 #include "mod/menu.h"
 #include "mod/loot.h"
+#include "mod/physics.h"
 #include "mod/motions.h"
 #include "mod/net.h"
 #include "mod/patch.h"
@@ -521,6 +522,8 @@ void install(const Config& cfg) {
   engine::on_tick(&motions::tick);
   loot::install(cfg);
   engine::on_tick(&loot::tick);
+  physics::install(cfg);
+  engine::on_tick(&physics::tick);
   engine::on_log(&on_log);
   engine::on_tick(&tick);
   engine::on_tick(&net::frame);

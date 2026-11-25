@@ -20,6 +20,10 @@ uint8_t* counted_text(const std::string& text);
 // The language the game runs in has Cyrillic letters in its fonts.
 bool cyrillic();
 
+// A caption under the middle of the screen, with a bar under it (fraction 0..1; below 0: no bar), drawn every frame
+// until it is set again or taken off (main thread). Empty text: off.
+void progress(const std::string& text, const std::string& english, float fraction);
+
 // A name that floats over a place of the world (a player's head). The whole list is given anew every frame
 // (main thread); an empty list takes the names off.
 struct Tag {

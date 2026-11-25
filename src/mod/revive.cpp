@@ -30,6 +30,11 @@ constexpr uint64_t kRaiseMs = 3000;    // how long "use" is held to raise
 constexpr uint64_t kAllDownMs = 2500;  // every player down this long: the last checkpoint, for everybody
 constexpr int kSlots = 32;
 constexpr int kUseAction = 35;         // the game's input action "use" (the pad's X; the lab, 2026-11-25)
+// The player's input flags (player + 0x134C: the game's input handler exe+289F40 keeps them at its object +1324,
+// the object being player + 3616): 0x10 - crouching (actions 12 / 13 / 14: hold, toggle, let go). A fallen player
+// is held crouching: lower for their own eyes, and their figure crouches for the others.
+constexpr size_t kInputFlags = 0x134C;
+constexpr uint32_t kCrouch = 0x10;
 
 Config g_cfg;
 std::atomic<bool> g_down[kSlots] = {};     // who is down (this PC's own slot too)
@@ -43,9 +48,13 @@ uint32_t g_old_bits = 0;
 bool g_floor_set = false;
 uint64_t g_raise_started = 0;              // when "use" next to a fallen teammate began
 int g_raising = -1;                        // ... and whom
+int g_raised_by = -1;                      // who raises this PC's fallen player now (their word), and since when
+uint64_t g_raised_since = 0;
+bool g_crouched = false;                   // the mod holds this PC's player crouching
 uint64_t g_last_reload = 0;
 
 std::atomic<bool> g_use_held{false};
+std::atomic<uint64_t> g_lab_use_until{0};  // the lab: "use" held without a pad until then
 std::atomic<uint64_t> g_lab_actions_until{0};
 
 #pragma pack(push, 1)
@@ -56,6 +65,11 @@ struct DownNote {
 struct RaiseNote {
   uint8_t slot;  // the one raised
   uint8_t by;    // the one who raised
+};
+struct RaisingNote {
+  uint8_t slot;  // the one being raised
+  uint8_t by;
+  uint8_t on;    // 1: holds Use over them now, 0: let go
 };
 #pragma pack(pop)
 
@@ -208,8 +222,7 @@ void set_down(int slot, bool down, bool tell) {
   }
   if (slot == my_slot()) {
     g_me_down.store(down);
-    if (down)
-      hud::notice("Вы тяжело ранены. Ждите, пока товарищ поднимет вас", "You are badly wounded. Wait for a teammate to raise you", 10);
+    (void)0;  // (the caption under the middle of the screen says it while this player is down: frame_tick)
   } else if (down) {
     hud::notice(name_of(slot) + " тяжело ранен: подойдите и удерживайте «Использовать»",
                 name_of(slot) + " is badly wounded: come close and hold Use", 10);
@@ -270,11 +283,24 @@ void own_tick(uint64_t now) {
 }
 
 // This PC's player raises a fallen teammate: holds "use" within reach.
+void tell_raising(int slot, bool on) {
+  if (slot < 0) return;
+  RaisingNote n = {static_cast<uint8_t>(slot), static_cast<uint8_t>(my_slot()), static_cast<uint8_t>(on ? 1 : 0)};
+  link::send(link::kRaising, &n, sizeof(n), true);
+}
+
+void stop_raising() {
+  if (g_raising >= 0) tell_raising(g_raising, false);
+  g_raise_started = 0;
+  g_raising = -1;
+}
+
 void raise_tick(uint64_t now) {
   int me = my_slot();
+  if (now < g_lab_use_until.load()) g_use_held.store(true);
+  else if (g_lab_use_until.exchange(0)) g_use_held.store(false);
   if (g_down[me].load() || !g_use_held.load()) {
-    g_raise_started = 0;
-    g_raising = -1;
+    stop_raising();
     return;
   }
   const float* mine = place_of(body_of(me));
@@ -292,14 +318,14 @@ void raise_tick(uint64_t now) {
     }
   }
   if (nearest < 0) {
-    g_raise_started = 0;
-    g_raising = -1;
+    stop_raising();
     return;
   }
   if (nearest != g_raising) {
+    stop_raising();
     g_raising = nearest;
     g_raise_started = now;
-    hud::notice("Поднимаю: " + name_of(nearest) + " (держите «Использовать»)", "Raising " + name_of(nearest) + " (hold Use)", 3);
+    tell_raising(nearest, true);
   }
   if (now - g_raise_started >= kRaiseMs) {
     RaiseNote n = {static_cast<uint8_t>(nearest), static_cast<uint8_t>(me)};
@@ -307,7 +333,7 @@ void raise_tick(uint64_t now) {
     LOGI("revive: this player raised player %d", nearest);
     hud::notice("Вы подняли: " + name_of(nearest), "You raised " + name_of(nearest), 5);
     g_raise_started = 0;
-    g_raising = -1;
+    g_raising = -1;  // (the raised one's "up again" ends their bar)
     g_use_held.store(false);
   }
 }
@@ -357,9 +383,58 @@ void on_revive(int, const uint8_t* data, size_t size) {
   hud::notice("Вас поднял " + name_of(n.by), name_of(n.by) + " raised you", 6);
 }
 
+void on_raising(int from, const uint8_t* data, size_t size) {
+  if (size < sizeof(RaisingNote)) return;
+  RaisingNote n;
+  memcpy(&n, data, sizeof(n));
+  if (my_slot() == 0) {
+    if (from != n.by) return;  // a player's own word only; the host tells the others
+    link::send(link::kRaising, data, size, true);
+  }
+  if (n.slot != my_slot() || !g_down[n.slot].load()) return;
+  if (n.on) {
+    LOGI("revive: player %d raises this player", n.by);
+    g_raised_by = n.by;
+    g_raised_since = GetTickCount64();
+  } else if (g_raised_by == n.by) {
+    g_raised_by = -1;
+  }
+}
+
+// Every frame: this PC's fallen player crouches (the game's own crouch: lower eyes, a crouching figure for the
+// others), and the caption with the bar: who raises whom and how far it has come.
+void frame_tick(uint64_t now) {
+  uint8_t* body = in_session() ? own_body() : nullptr;
+  bool down = body && g_me_down.load();
+  if (down) {
+    *reinterpret_cast<uint32_t*>(body + kInputFlags) |= kCrouch;
+    g_crouched = true;
+  } else if (g_crouched) {
+    if (body) *reinterpret_cast<uint32_t*>(body + kInputFlags) &= ~kCrouch;
+    g_crouched = false;
+  }
+  if (down) {
+    g_raising = -1;
+    if (g_raised_by >= 0 && now - g_raised_since < kRaiseMs + 1500) {
+      float f = static_cast<float>(now - g_raised_since) / kRaiseMs;
+      hud::progress(name_of(g_raised_by) + " поднимает вас", name_of(g_raised_by) + " is raising you", f);
+    } else {
+      g_raised_by = -1;
+      hud::progress("Вы тяжело ранены — ждите товарища", "You are badly wounded - wait for a teammate", -1.f);
+    }
+  } else if (g_raising >= 0 && g_raise_started) {
+    float f = static_cast<float>(now - g_raise_started) / kRaiseMs;
+    hud::progress("Поднимаете: " + name_of(g_raising), "Raising " + name_of(g_raising), f);
+  } else {
+    g_raised_by = -1;
+    hud::progress("", "", -1.f);
+  }
+}
+
 void tick() {
   static uint64_t last = 0;
   uint64_t now = GetTickCount64();
+  frame_tick(now);
   if (now - last < 100) return;
   last = now;
   if (!in_session()) {
@@ -388,6 +463,11 @@ void filter_pad(void* xinput_state) {
   p->lx = p->ly = 0;  // the right stick (the look) stays
 }
 
+void lab_hold_use(unsigned ms) {
+  g_lab_use_until.store(GetTickCount64() + ms);
+  LOGI("lab: \"use\" is held for %u ms", ms);
+}
+
 void lab_actions(unsigned seconds) {
   g_lab_actions_until.store(GetTickCount64() + seconds * 1000ull);
   LOGI("lab: input actions are logged for %u s", seconds);
@@ -409,6 +489,7 @@ void install(const Config& cfg) {
   }
   link::on(link::kDowned, &on_downed);
   link::on(link::kRevive, &on_revive);
+  link::on(link::kRaising, &on_raising);
   engine::on_tick(&tick);
 }
 

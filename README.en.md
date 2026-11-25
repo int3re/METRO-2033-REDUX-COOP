@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-E07A1F">
+  <img alt="version 0.4.1" src="https://img.shields.io/badge/version-0.4.1-E07A1F">
   <img alt="state: trial build" src="https://img.shields.io/badge/state-trial%20build-8a2b1d">
   <img alt="Windows 10/11, 64-bit" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078d4">
   <img alt="tested: 2–3 players" src="https://img.shields.io/badge/tested-2–3%20players-4BCB3C">
@@ -99,14 +99,20 @@ LAUNCHER station). Building the mod from source - below.
   gear: three guns, ammunition, grenades, medkits. They shoot, reload and change weapons themselves.
 - **A shared world.** A joined player's bullets hurt and kill enemies; the level's scripts act on everyone; doors,
   levers, wheels, cabinets and talks that one player "used" happen on every PC; the handcar runs the same, the
-  joined player sits beside the leading one; doors, gates and whatever moves in the level move for the
-  joined players as for the leading one (a door a story character opens too).
+  joined player stands beside the leading one on it, and takes the next seat in the car or on any other vehicle;
+  doors, gates and whatever moves in the level move for the joined players as for the leading one (a door a story
+  character opens too); crates, barrels and other loose things one player's physics moved lie the same for all.
+- **The story for all, the personal for oneself.** A zone of the level's script starts its scene for everybody
+  when anybody walks in, while what the zone does to the player (the weapon lowered at a station, the gas mask and
+  its filters, fire, a lift) happens only to the player who walked in. When a scene hides the leading player's
+  weapon, the joined player puts theirs away too.
 - **Each player's own loot.** Everyone picks up for themselves: what one player took - ammunition, medkits,
   filters, a weapon from a stash - stays in place for the others until they take it. An enemy's weapon is one for
   all: who takes it first has it.
 - **Level changes.** The leading player changes levels, the others follow by themselves and get new bodies.
-- **Wounded, not killed.** A player who would die falls badly wounded: cannot walk or shoot and waits for a
-  teammate, who holds Use next to them for three seconds to raise them. When everybody is down, the last checkpoint
+- **Wounded, not killed.** A player who would die falls badly wounded: crouches low, cannot walk or shoot and
+  waits for a teammate, who holds Use next to them for three seconds to raise them; both see a caption and a bar of
+  how far the raise has come. When everybody is down, the last checkpoint
   is loaded for everybody.
 - **Players' names** — their Steam names — over their heads and in lines like "… is joining the game", in the
   game's own font.
@@ -141,7 +147,13 @@ leading player loading a checkpoint, leaving and coming back, three players.
 - playing levels beyond their first minutes;
 - more than three players (the engine has room for 32).
 
-**Not sent between the players yet:** lifts, things moved by physics, vehicles other than handcars.
+**0.4.1 was built on request without testing:** the downed player crouching with a raise bar, other players'
+first-person hands, weapons in scenes, the seat on any vehicle, loose physics things, zones "the story for all,
+the personal for oneself", closing the game during the menu's intro video, joining beside a leader who has not
+walked yet. Each part has a switch in `metronet.ini` (see [dist/README.md](dist/README.md)).
+
+**Not sent between the players yet:** what story characters far from the leading player do and say when only the
+leader's script started their scene.
 
 **Not there yet:** an item of its own in the main menu (in Redux that menu is a 3D scene — labels on the things
 of a desk); the mod asks through the game's window once a friend is playing.

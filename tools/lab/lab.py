@@ -77,9 +77,34 @@ def free_memory_gb():
     return st.avail_phys / 2.0 ** 30, st.avail_commit / 2.0 ** 30
 
 
+USER_GAMES = ("dota2.exe", "cs2.exe")  # the user's own games: no lab copies while one runs (2026-11-26: Dota 2)
+
+
+def user_game_running():
+    """The name of a game the user plays now (one of USER_GAMES, or the real Metro outside the lab), or ''."""
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=30).stdout.lower()
+    except Exception:
+        return ""
+    for name in USER_GAMES:
+        if '"%s"' % name in out:
+            return name
+    return ""
+
+
 def require_memory(copies=1):
     """Stops the run (SystemExit) when the PC has no room for `copies` copies of the game."""
     global _memory_checked
+    wait_min = float(os.environ.get("METRONET_WAIT_MEMORY", "0") or 0)
+    playing = user_game_running()
+    if playing and wait_min > 0:
+        print("lab: waiting - the user plays (%s)" % playing, flush=True)
+        end = time.time() + wait_min * 60
+        while playing and time.time() < end:
+            time.sleep(60)
+            playing = user_game_running()
+    if playing:
+        raise SystemExit("lab: NOT STARTED - the user plays (%s)" % playing)
     ram, commit = free_memory_gb()
     # METRONET_WAIT_MEMORY = minutes: a long run in the background waits for room (with a margin - the user's own
     # programs come first) instead of stopping, e.g. while the user plays something (2026-11-24: a sweep "finished"

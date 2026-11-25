@@ -73,6 +73,12 @@ struct LabLine {
   std::string text;
   std::string drawn;
 } g_lab;
+constexpr size_t kBarCells = 28;  // the bar: so many "|" of the game's font
+struct Progress {
+  std::string text, english, drawn, bar;
+  float fraction = -1.f;
+  bool on = false;
+} g_progress;
 std::atomic<uint64_t> g_frames{0};
 uint32_t g_tag_colour = 0xFFE8E0C8;
 int g_tag_alignment = 2;  // the lab tries 0, 1, 2 ("!text 9 <alignment> 0 0 <colour> x")
@@ -144,6 +150,7 @@ void on_draw(uint8_t* self) {
   ++g_frames;
   if (!game::ref<void*>(game::kLevel) || !game::ref<void*>(kFontTable)) return;
   LabLine lab;
+  Progress progress;
   std::vector<std::string> lines;
   std::vector<DrawnTag> tag_list;
   {
@@ -153,6 +160,9 @@ void on_draw(uint8_t* self) {
     tag_list = g_tags;
     if (g_lab.on && g_lab.drawn.empty()) g_lab.drawn = g_lab.raw ? g_lab.text : to_font(g_lab.text);
     lab = g_lab;
+    if (g_progress.on && g_progress.drawn.empty()) g_progress.drawn = to_font(has_letter(L'\u044F') ? g_progress.text : g_progress.english);
+    if (g_progress.on && g_progress.bar.empty()) g_progress.bar = to_font(std::string(kBarCells, '|'));
+    progress = g_progress;
     uint64_t now = GetTickCount64();
     for (size_t i = 0; i < g_notices.size();) {
       Line& n = g_notices[i];
@@ -165,7 +175,7 @@ void on_draw(uint8_t* self) {
       ++i;
     }
   }
-  if (!lab.on && lines.empty() && tag_list.empty()) return;
+  if (!lab.on && lines.empty() && tag_list.empty() && !progress.on) return;
   void* font = *reinterpret_cast<void**>(self + kFonts[1]);
   if (font && !tag_list.empty()) {
     bool any = false;
@@ -186,6 +196,18 @@ void on_draw(uint8_t* self) {
       flush(f);
     }
   }
+  if (font && progress.on && !progress.drawn.empty()) {
+    // the caption in the middle, under the sight; the bar under it: all its cells dim, the part done bright on top
+    put(font, 0.f, 0.16f, 0.042f, 0xFFE8E0C8, progress.drawn.c_str(), 2);
+    if (progress.fraction >= 0.f && !progress.bar.empty()) {
+      const float height = 0.05f, left = -0.155f;
+      put(font, left, 0.235f, height, 0x50E8E0C8, progress.bar.c_str(), 0);
+      size_t done = static_cast<size_t>(progress.fraction * kBarCells + 0.5f);
+      if (done > progress.bar.size()) done = progress.bar.size();
+      if (done) put(font, left, 0.235f, height, 0xFFD8B070, progress.bar.substr(0, done).c_str(), 0);
+    }
+    flush(font);
+  }
   if (font && !lines.empty()) {
     float y = -0.90f;
     for (const std::string& line : lines) {
@@ -200,6 +222,21 @@ void on_draw(uint8_t* self) {
 
 uint8_t* counted_text(const std::string& text) { return make_counted(text); }
 bool cyrillic() { return has_letter(L'\u044F'); }
+
+void progress(const std::string& text, const std::string& english, float fraction) {
+  std::lock_guard<std::mutex> hold(g_lock);
+  if (text.empty()) {
+    g_progress.on = false;
+    return;
+  }
+  if (!g_progress.on || g_progress.text != text) {
+    g_progress.text = text;
+    g_progress.english = english;
+    g_progress.drawn.clear();
+  }
+  g_progress.fraction = fraction > 1.f ? 1.f : fraction;
+  g_progress.on = true;
+}
 
 void tags(std::vector<Tag> list) {
   std::lock_guard<std::mutex> hold(g_lock);

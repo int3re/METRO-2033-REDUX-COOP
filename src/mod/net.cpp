@@ -17,6 +17,7 @@
 
 #include "common/log.h"
 #include "mod/game.h"
+#include "mod/engine.h"
 #include "mod/link.h"
 #include "mod/loot.h"
 #include "mod/patch.h"
@@ -263,7 +264,31 @@ bool is_command(const char* p, const char* name) {
   return !strncmp(p, name, n) && (p[n] == ' ' || p[n] == 0);
 }
 
+// The game falls when it is closed while a video plays (the main menu's own, after a while of nobody touching
+// anything: the video's thread uses what closing takes away - +E60FB, seen in the lab, the same without the
+// mod's session). A "quit" while a video plays stops the video first and comes again a moment later.
+std::atomic<bool> g_video{false};
+std::atomic<unsigned long long> g_frame_seen{0};  // when the mod's frame ran last (net::frame)
+std::atomic<uint64_t> g_quit_at{0};
+
+void on_video_line(const char* line) {
+  if (strstr(line, "PUSH PAUSE - REASON [play_video]")) g_video.store(true);
+  else if (strstr(line, "POP PAUSE - REASON [play_video]")) g_video.store(false);
+}
+
 void on_console_line(char* line) {
+  if (line) {
+    const char* q = line;
+    while (*q == ' ' || *q == '^') ++q;
+    // (only while the mod's frame runs: it gives the quit back)
+    if (is_command(q, "quit") && g_video.load() && !g_quit_at.load() && GetTickCount64() - g_frame_seen.load() < 1000) {
+      LOGI("net: quit while a video plays: the video is stopped first, the quit comes in a moment");
+      char stop[] = "stop_video";
+      g_console_line(stop);
+      g_quit_at.store(GetTickCount64() + 700);
+      return;
+    }
+  }
   if (line && game::ref<uintptr_t>(game::kNetHost) > 1) {
     const char* p = line;
     while (*p == ' ' || *p == '\t') ++p;
@@ -773,16 +798,97 @@ int zone_players(uint8_t* callbacks, void** entity, bool enters, bool* was_empty
   return static_cast<int>(z->inside.size());
 }
 
+// What a zone does "to the player" is of two kinds. The story (a scene, a door, a character's line, the handcar's
+// start) goes by the shared state above: once for all, when the first one is in / the last one is out. What is the
+// player's own business where they stand - the weapon lowered at a station ("civil mode", "friend mode"), the gas
+// mask and its filters, the suit, fire, the light's adaptation, the sprint - belongs to each player's own steps:
+// a player outside the station keeps the weapon up while another walks in. (0.4.1: "zones fire for everybody".)
+// The zone's signal (exe+706270: its list of {object, function} links, called one by one) is split: the shared
+// event leaves out the links to such blocks, and every step of this PC's own body in or out fires those links
+// alone. Blocks reached further down a chain (a zone -> a delay -> civil mode) still go with the shared event.
+constexpr uintptr_t kPersonalBlocks[] = {
+    0xB5C020,  // actions/player/civil mode
+    0xB5C8B0,  // actions/player/friend mode (friend_mode, friend_mode_target)
+    0xB5BE80,  // actions/player/in flames
+    0xB56970,  // actions/player/wear gasmask
+    0xB56DD0,  // actions/player/gasmask effect
+    0xB84E80,  // actions/player/gasmask hit
+    0xB56BB0,  // actions/player/gasmask spend speed
+    0xB6EDA0,  // actions/player/gasmask filter limits
+    0xB59680,  // actions/player/filters_spend
+    0xB667E0,  // actions/player/wear suit
+    0xB56FF0,  // actions/player/wear nightvision
+    0xB6E560,  // actions/player/disable sprint track
+    0xB6A0B0,  // actions/player/luminocity correction
+    0xB5CAC0,  // actions/player/restrictor obstacle
+    0xB53E60,  // actions/player/platform_attach (a lift's floor carries the player who stands on it)
+    0xB54070,  // actions/player/platform_detach
+};
+enum ZoneScope { kScopeNone, kScopeShared, kScopeOwn };
+ZoneScope g_zone_scope = kScopeNone;
+uint8_t* g_zone_firing = nullptr;  // the zone block whose event runs now
+using SignalFn = void (*)(uint8_t*);
+SignalFn g_signal = nullptr;
+int g_zone_split_told = 0;
+
+uintptr_t block_class(const uint8_t* obj) {
+  for (int back : {0, 8}) {
+    const uint8_t* p = obj - back;
+    if (IsBadReadPtr(p, 8)) continue;
+    uintptr_t vt = *reinterpret_cast<const uintptr_t*>(p);
+    for (uintptr_t c : kPersonalBlocks)
+      if (vt == game::at(c)) return c;
+  }
+  return 0;
+}
+
+void on_signal(uint8_t* output) {
+  uint8_t* zone = g_zone_firing;
+  if (g_zone_scope == kScopeNone || !zone || output < zone || output >= zone + 0x100) return g_signal(output);
+  uint16_t n = *reinterpret_cast<uint16_t*>(output + 26);
+  uint8_t** links = *reinterpret_cast<uint8_t***>(output + 16);
+  for (unsigned i = 0; i < n && links; ++i) {
+    uint8_t* link = links[i];
+    if (!link) continue;
+    uint8_t* obj = *reinterpret_cast<uint8_t**>(link);
+    uintptr_t cls = obj ? block_class(obj) : 0;
+    bool personal = cls != 0;
+    if (personal != (g_zone_scope == kScopeOwn)) {
+      if (personal && g_zone_split_told++ < 20)
+        LOGI("net: zone %p: its player block (+%llX) is left to each player's own steps", zone, static_cast<unsigned long long>(cls));
+      continue;
+    }
+    if (personal && g_zone_split_told++ < 20)
+      LOGI("net: zone %p: its player block (+%llX) fires for this PC's own step", zone, static_cast<unsigned long long>(cls));
+    reinterpret_cast<void (*)(uint8_t*)>(*reinterpret_cast<void**>(link + 8))(obj);
+  }
+}
+
 int64_t on_zone_event(ZoneEventFn original, uint8_t* callbacks, void** entity, bool enters) {
   bool was_empty = false;
   int inside = zone_players(callbacks, entity, enters, &was_empty);
   if (inside == -2) return 0;
   if (inside < 0) return original(callbacks, entity);
   uint8_t* own = controlled();
-  // the first one in / the last one out counts; the others change nothing
-  if (!own || (enters ? !(was_empty && inside == 1) : !(!was_empty && inside == 0))) return 0;
-  void* own_handle = *reinterpret_cast<void**>(own + game::kEntityHandle);
-  return own_handle ? original(callbacks, &own_handle) : 0;
+  void* own_handle = own ? *reinterpret_cast<void**>(own + game::kEntityHandle) : nullptr;
+  if (!own_handle) return 0;
+  bool own_step = *reinterpret_cast<uint8_t**>(*entity) == own + game::kEntityHandle;
+  // the first one in / the last one out counts for the story; the others change nothing there
+  bool shared = enters ? (was_empty && inside == 1) : (!was_empty && inside == 0);
+  int64_t result = 0;
+  uint8_t* zone = callbacks - kZoneCallbacks;
+  bool split = g_signal != nullptr;
+  if (shared) {
+    g_zone_firing = zone, g_zone_scope = split ? kScopeShared : kScopeNone;
+    result = original(callbacks, &own_handle);
+    g_zone_firing = nullptr, g_zone_scope = kScopeNone;
+  }
+  if (own_step && split) {
+    g_zone_firing = zone, g_zone_scope = kScopeOwn;
+    original(callbacks, &own_handle);
+    g_zone_firing = nullptr, g_zone_scope = kScopeNone;
+  }
+  return result;
 }
 
 int64_t on_zone_enter(uint8_t* callbacks, void** entity) { return on_zone_event(g_zone_enter, callbacks, entity, true); }
@@ -1313,6 +1419,7 @@ int64_t on_update_one(uint8_t* e, unsigned step) {
 void on_rails(int from, const uint8_t* data, size_t size);
 void install_rails();
 void on_seat(int from, const uint8_t* data, size_t size);
+void on_hands(int from, const uint8_t* data, size_t size);
 void on_actors(int from, const uint8_t* data, size_t size);
 void on_way(int from, const uint8_t* data, size_t size);
 void settle_actors();
@@ -1401,8 +1508,12 @@ void widen_silence_limits(int seconds) {
   patch::replace("network: silence after the retries", game::at(0x8EDC6C), was_least, now_least, 6);
 }
 
+void set_hands_mode(int mode);
+
 void install(const Config& cfg) {
   g_cfg = cfg;
+  set_hands_mode(cfg.net_hide_hands);
+  engine::on_log(&on_video_line);
   if (cfg.net_mode != Config::NetMode::Off) widen_silence_limits(cfg.net_timeout);
   if (cfg.net_mode != Config::NetMode::Off && cfg.net_tree_lock)
     patch::hook("collision tree: write lock", game::at(kTreeWriteLock), reinterpret_cast<void*>(&on_tree_write_lock),
@@ -1415,6 +1526,8 @@ void install(const Config& cfg) {
   if (cfg.net_zones) {
     patch::hook("zone: enter", game::at(0x4AEFB4), reinterpret_cast<void*>(&on_zone_enter), reinterpret_cast<void**>(&g_zone_enter));
     patch::hook("zone: leave", game::at(0x4AF530), reinterpret_cast<void*>(&on_zone_leave), reinterpret_cast<void**>(&g_zone_leave));
+    if (cfg.net_zone_own)
+      patch::hook("zone: the player's own blocks", game::at(0x706270), reinterpret_cast<void*>(&on_signal), reinterpret_cast<void**>(&g_signal));
   }
   if (cfg.net_use) {
     patch::hook("use block made", game::at(kUseBlockMade), reinterpret_cast<void*>(&on_use_block_made), reinterpret_cast<void**>(&g_use_block_made));
@@ -1436,6 +1549,7 @@ void install(const Config& cfg) {
   link::on(link::kRails, &on_rails);
   install_rails();
   link::on(link::kSeat, &on_seat);
+  link::on(link::kHands, &on_hands);
   link::on(link::kActors, &on_actors);
   link::on(link::kWay, &on_way);
   patch::hook("hit event filter", game::at(game::kHitEventFilter), reinterpret_cast<void*>(&on_hit_filter),
@@ -1691,6 +1805,24 @@ void on_way(int, const uint8_t* data, size_t size) {
   LOGI("net: the host's way came with the body: %u points", n);
 }
 
+// The game's own ray (exe+728CF0, what its "pick" and the camera's collision use): {from, direction, range,
+// 0x60000, 4} -> whether it hit, and how far (the entity `ignore` is let through).
+bool ray_hit(float x, float y, float z, float dx, float dy, float dz, float range, void* ignore, float* distance) {
+  struct Ray {
+    float from[3], dir[3], range;
+    uint32_t mask, kind, pad;
+  } ray = {{x, y, z}, {dx, dy, dz}, range, 0x60000, 4, 0};
+  alignas(16) uint8_t result[0x40] = {};
+  result[0x26] = 1;
+  void* skip = ignore;
+  using Pick = bool (*)(void*, void*, void*, void**);
+  bool hit = reinterpret_cast<Pick>(game::at(0x728CF0))(&ray, nullptr, result, &skip);
+  float d = 0.f;
+  memcpy(&d, result + 8, 4);
+  if (distance) *distance = d;
+  return hit && d > 0.f && d <= range;
+}
+
 void step_aside(uint8_t* body) {
   uint8_t* host = host_body();
   if (!host || host == body) return;
@@ -1709,7 +1841,35 @@ void step_aside(uint8_t* body) {
     LOGI("net: the own body steps %.1f m aside, to where the host stood: (%.2f,%.2f,%.2f)", flat, p.x, p.y, p.z);
     return;
   }
-  LOGI("net: the own body stays where it was made (the host has not walked %s)", g_host_way.size() > 1 ? "far enough" : "yet");
+  // No way of the host to go by (the level has just begun, the host has not walked): a free place around the host,
+  // behind it first, found by the game's own ray (the one its "pick" uses): nothing between the host's chest and
+  // the place, and a floor under the place at the host's height.
+  float yaw = atan2f(-reinterpret_cast<const float*>(host + game::kEntityMatrix)[8], -reinterpret_cast<const float*>(host + game::kEntityMatrix)[10]);
+  void* host_handle = *reinterpret_cast<void**>(host + game::kEntityHandle);
+  void* own_handle = *reinterpret_cast<void**>(body + game::kEntityHandle);
+  for (int k = 0; k < 8; ++k) {
+    static const float turns[8] = {0.f, 0.785f, -0.785f, 1.571f, -1.571f, 2.356f, -2.356f, 3.142f};
+    float a = yaw + turns[k];
+    float dx = sinf(a), dz = cosf(a);
+    const float reach = 1.3f;
+    float hit = 0.f;
+    if (ray_hit(h[0], h[1] + 1.2f, h[2], dx, 0.f, dz, reach + 0.45f, host_handle, &hit)) continue;  // a wall in between
+    float cx = h[0] + dx * reach, cz = h[2] + dz * reach;
+    float down = 0.f;
+    if (!ray_hit(cx, h[1] + 1.2f, cz, 0.f, -1.f, 0.f, 2.4f, own_handle, &down)) continue;  // no floor there
+    float floor_y = h[1] + 1.2f - down;
+    if (fabsf(floor_y - h[1]) > 0.45f) continue;  // a step, a pit
+    float m[16];
+    memcpy(m, body + game::kEntityMatrix, sizeof(m));
+    m[12] = cx, m[13] = floor_y, m[14] = cz;
+    using SetMatrix = void (*)(uint8_t*, const float*, int);
+    (*reinterpret_cast<SetMatrix**>(body))[game::kEntitySetMatrix / 8](body, m, 0);
+    LOGI("net: the own body steps %.1f m aside from the host (the host has not walked): (%.2f,%.2f,%.2f), %d tries", reach, cx, floor_y, cz,
+         k + 1);
+    return;
+  }
+  LOGI("net: the own body stays where it was made (the host has not walked %s; no free place around it)",
+       g_host_way.size() > 1 ? "far enough" : "yet");
 }
 
 // The picture of the weapon and ammunition on the screen belongs to one player entity (the weapon HUD keeps a
@@ -1790,6 +1950,17 @@ bool is_rail(const uint8_t* e) {
   for (uintptr_t c : kRailClasses)
     if (c == cls) return true;
   return false;
+}
+
+// What a player can ride (0.4.1: "transport other than handcars"): a handcar, or whatever else the level's script
+// hangs the player's body on - the car of l28, a cage, a lift's floor, a thing of a scene - but not a character
+// (a monster that grabs, a man who leads) and not another player.
+bool is_carrier(const uint8_t* e) {
+  if (!e) return false;
+  if (is_rail(e)) return true;
+  if (*reinterpret_cast<const uint32_t*>(e + game::kEntityFlags) & 4u) return false;
+  if (*reinterpret_cast<const uintptr_t*>(e) == game::at(game::kPlayerClass)) return false;
+  return *reinterpret_cast<const uint16_t*>(e + game::kEntityId) != 0xFFFF;
 }
 
 #pragma pack(push, 1)
@@ -1961,7 +2132,7 @@ void tell_host_seat() {
   if (!own) return;
   uint8_t* carrier = parent_of(own);
   Seat seat;
-  if (carrier && is_rail(carrier)) {
+  if (carrier && is_carrier(carrier)) {
     const float* c = reinterpret_cast<const float*>(carrier + game::kEntityMatrix);
     const float* h = reinterpret_cast<const float*>(own + game::kEntityPosition);
     float d[3] = {h[0] - c[12], h[1] - c[13], h[2] - c[14]};
@@ -2004,7 +2175,7 @@ void follow_seat() {
   uint8_t* own = controlled();
   uint8_t* host = host_body();
   uint8_t* carrier = own && host && own != host ? parent_of(host) : nullptr;
-  if (!carrier || !is_rail(carrier)) {
+  if (!carrier || !is_carrier(carrier)) {
     if (g_seat.carrier != 0xFFFF) LOGI("net: the host is off the vehicle %X: the own body is free again", g_seat.carrier);
     g_seat.carrier = 0xFFFF;
     if (own) tell_seat(own, g_seat);
@@ -2033,15 +2204,30 @@ void follow_seat() {
     // and every bullet hit the lever); across the middle from the host a man pumps the lever 0.85 m in front of
     // the eyes. The host's own side is the open one: the first joined player rides on the handcar's edge beside
     // the host, the second takes the seat across the middle, the third hangs on outside the first.
+    // (0.4.1, "the second player stands on the edge"): when the host sits at one end of the vehicle, the first
+    // joined player stands on the platform on the host's side, 1.4 m nearer the other end (l03: between the host
+    // and the passenger, beside the lever) instead of out on the edge.
     int me = game::ref<int>(game::kNetLocalPlayer);
     float side = host_x >= 0 ? 1.f : -1.f;
     float off = fabsf(host_x) >= 0.35f ? fabsf(host_x) : 0.7f;
-    if (me <= 1)
+    if (!is_rail(carrier)) {
+      // another vehicle (the car of l28, a lift): the seat across the vehicle's middle from the host, or behind the
+      // host when the host sits in the middle; the third and the next further back
+      if (fabsf(host_x) >= 0.3f && me <= 1) {
+        g_seat.x = -host_x;
+      } else {
+        g_seat.z -= 1.0f * (me <= 1 ? 1 : me - (fabsf(host_x) >= 0.3f ? 1 : 0));
+      }
+    } else if (me <= 1 && fabsf(g_seat.z) >= 0.9f) {
+      g_seat.x = side * off;
+      g_seat.z -= (g_seat.z > 0 ? 1.f : -1.f) * 1.4f;
+    } else if (me <= 1) {
       g_seat.x = side * (off + 0.75f);
-    else if (me == 2)
+    } else if (me == 2) {
       g_seat.x = -side * off;
-    else
+    } else {
       g_seat.x = side * (off + 1.5f);
+    }
     const uint8_t* name = *reinterpret_cast<uint8_t**>(carrier + game::kEntityName);
     LOGI("net: the host rides '%s' (%X): the own body is kept beside its seat (the host sits %.2f m off the middle, "
          "this body %.2f; %.2f up, %.2f along)", name ? reinterpret_cast<const char*>(name) + 0x14 : "", id, host_x, g_seat.x,
@@ -2057,7 +2243,159 @@ void follow_seat() {
   tell_seat(own, g_seat);
 }
 
+// --- the other players' first-person hands ----------------------------------------------------------------------
+// Every player's body carries the first-person hands ("players_hands": the bare arms, and the weapon in them) at
+// its eyes. On the PC that controls the body that is the picture of one's own hands; every other PC draws them in
+// the world where the body's eyes are: a big bare arm in front of the figure for whoever comes close, and across
+// the whole view while two players stand in one spot. Each PC puts away the hands of the bodies it does not
+// control. The way chosen ([net] hide_hands, default 1) is the game's own "hide hands" of its scenes (exe+408660):
+// the hands' link to the eyes' bone is dropped (exe+6A78A0) and they hang on the body itself again (exe+6A87E0).
+// That link is at hands + 0x1E0; the game may make it anew (a weapon change), so it is looked at again.
+constexpr size_t kHandsEyesLink = 0x1E0;
+int g_hands_mode = 1;
+uint16_t g_hands_done[8] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+uint64_t g_hands_logged = 0;
+
+uint8_t* hands_of(uint8_t* body) {
+  uint8_t* server = game::ref<uint8_t*>(game::kServer);
+  if (!server || !body) return nullptr;
+  uint8_t* table = *reinterpret_cast<uint8_t**>(server + game::kServerEntities);
+  unsigned count = *reinterpret_cast<uint16_t*>(server + game::kServerEntityCount);
+  if (!table) return nullptr;
+  for (unsigned i = 0; i < count; ++i) {
+    uint8_t* e = *reinterpret_cast<uint8_t**>(table + i * 16 + 8);
+    if (!e || e == body || parent_of(e) != body) continue;
+    const uint8_t* name = *reinterpret_cast<uint8_t**>(e + game::kEntityName);
+    if (name && !strncmp(reinterpret_cast<const char*>(name) + 0x14, "players_hands", 13)) return e;
+  }
+  return nullptr;
+}
+
+// Puts one body's hands away; false when it has none (yet).
+bool put_hands_away(uint8_t* body, int mode, bool again) {
+  uint8_t* hands = hands_of(body);
+  if (!hands) return false;
+  uint16_t hid = *reinterpret_cast<uint16_t*>(hands + game::kEntityId);
+  uint16_t bid = *reinterpret_cast<uint16_t*>(body + game::kEntityId);
+  if (mode == 1) {
+    if (again && !*reinterpret_cast<void**>(hands + kHandsEyesLink)) return true;  // still away
+    reinterpret_cast<void (*)(uint8_t*)>(game::at(0x6A78A0))(hands);
+    using Hang = uint32_t (*)(uint16_t, uint8_t*, uint16_t, uint64_t, uint64_t);
+    reinterpret_cast<Hang>(game::at(0x6A87E0))(hid, hands, bid, 0, 0);
+  } else if (mode == 2) {
+    *reinterpret_cast<uint32_t*>(hands + game::kEntityFlags) |= 0x4000;
+  } else if (mode == 3) {
+    if (again && !parent_of(hands)) return true;
+    come_off(hands);
+    float m[16];
+    memcpy(m, hands + game::kEntityMatrix, sizeof(m));
+    m[13] -= 400.f;
+    using SetMatrix = void (*)(uint8_t*, const float*, int);
+    (*reinterpret_cast<SetMatrix**>(hands))[game::kEntitySetMatrix / 8](hands, m, 0);
+  }
+  uint64_t now = GetTickCount64();
+  if (!again || now - g_hands_logged > 10000) {
+    g_hands_logged = now;
+    LOGI("net: the hands %X of body %X are put away here (way %d%s)", hid, bid, mode, again ? ", once more" : "");
+  }
+  return true;
+}
+
+void hide_others_hands() {
+  if (g_hands_mode <= 0 || game::ref<uintptr_t>(game::kNetHost) < 2) return;
+  Players& p = players();
+  uint8_t* mine = controlled();
+  if (!p.array) return;
+  for (unsigned slot = 0; slot < p.size && slot < 8; ++slot) {
+    uint16_t id = *reinterpret_cast<uint16_t*>(p.array + game::kNetPlayerSize * slot + 0x64);
+    uint8_t* body = id != 0xFFFF ? entity_by_id(id) : nullptr;
+    if (!body || body == mine) {
+      g_hands_done[slot] = 0xFFFF;
+      continue;
+    }
+    bool again = g_hands_done[slot] == id;
+    if (put_hands_away(body, g_hands_mode, again)) g_hands_done[slot] = id;
+  }
+}
+
+void set_hands_mode(int mode) { g_hands_mode = mode; }
+
+// --- the hands in the host's scenes -----------------------------------------------------------------------------
+// A scene of the story puts the player's hands away (the talk on the handcar of l03, a scene with a camera): the
+// level script's "hide hands" on the host's PC. A joined game's own script does not always come to that block (the
+// scene began by the host's seat, the host's zone), and its player rode on with the weapon in the hands. The host
+// tells whether its own hands are away; a joined game keeps its own hands away for as long (as the game's "hide
+// hands" does), and takes the weapon back into the hands when the host's are out again.
+bool g_host_hands_away = false;   // a joined game: what the host said
+bool g_own_hands_put = false;     // a joined game: the mod put this PC's hands away for the host's scene
+int g_hands_said = -1, g_hands_said_peers = -1;   // the host: what it said last, to how many PCs
+// The host says "away" only after it has seen its hands out in this level (with this body): should the link be
+// empty in some state of plain play as well, the joined players would otherwise be left without their weapons.
+uint16_t g_hands_seen_out = 0xFFFF;               // the host's body whose hands were seen with their link
+
+bool own_hands_away(uint8_t* own) {
+  uint8_t* hands = hands_of(own);
+  return hands && !*reinterpret_cast<void**>(hands + kHandsEyesLink);
+}
+
+void on_hands(int, const uint8_t* data, size_t size) {
+  if (size < 1 || game::ref<int>(game::kNetLocalPlayer) == 0) return;
+  bool away = data[0] != 0;
+  if (away != g_host_hands_away) LOGI("net: the host's hands are %s (its scene)", away ? "away" : "out again");
+  g_host_hands_away = away;
+}
+
+void scene_hands() {
+  if (game::ref<uintptr_t>(game::kNetHost) < 2 || !g_cfg.net_scene_hands) return;
+  uint8_t* own = controlled();
+  if (!own) return;
+  int me = game::ref<int>(game::kNetLocalPlayer);
+  if (me == 0) {
+    uint16_t body = *reinterpret_cast<uint16_t*>(own + game::kEntityId);
+    uint8_t* hands = hands_of(own);
+    if (hands && *reinterpret_cast<void**>(hands + kHandsEyesLink)) g_hands_seen_out = body;
+    int away = g_hands_seen_out == body && own_hands_away(own) ? 1 : 0;
+    int peers = link::peers();
+    if (away == g_hands_said && peers == g_hands_said_peers) return;
+    if (away != g_hands_said) LOGI("net: the own hands are %s here", away ? "away (a scene of the level script)" : "out");
+    uint8_t note = static_cast<uint8_t>(away);
+    if (peers > 0 && !link::send(link::kHands, &note, 1, true)) return;
+    g_hands_said = away, g_hands_said_peers = peers;
+    return;
+  }
+  if (me < 0) return;
+  if (g_host_hands_away) {
+    if (!own_hands_away(own) && put_hands_away(own, 1, false)) {
+      if (!g_own_hands_put) LOGI("net: the own hands are put away for the host's scene");
+      g_own_hands_put = true;
+    }
+  } else if (g_own_hands_put) {
+    g_own_hands_put = false;
+    uint8_t* inv = *reinterpret_cast<uint8_t**>(own + game::kActorInventory);
+    int taken = 0;
+    if (inv && *reinterpret_cast<uintptr_t*>(inv) == game::at(game::kPlayerInventory)) {
+      using Select = int64_t (*)(uint8_t*, char, int64_t, int);
+      Select select = (*reinterpret_cast<Select**>(inv))[game::kInventorySelect / 8];
+      for (int slot : {16, 2, 1})
+        if (select(inv, static_cast<char>(slot), 0, 0)) {
+          taken = slot;
+          break;
+        }
+    }
+    LOGI("net: the host's scene is over: the own hands are out again (the weapon of slot %d into them)", taken);
+  }
+}
+
+void lab_hands(int mode) {
+  g_hands_mode = mode;
+  for (uint16_t& d : g_hands_done) d = 0xFFFF;
+  LOGI("lab: hands of the others: way %d", mode);
+  hide_others_hands();
+}
+
 void tick() {
+  hide_others_hands();
+  scene_hands();
   if (game::ref<uintptr_t>(game::kNetHost) > 1 && game::ref<int>(game::kNetLocalPlayer) > 0) settle_actors();
   if (game::ref<uintptr_t>(game::kNetHost) > 1) keep_host_way();
   if (g_own_body != 0xFFFF) {
@@ -2275,6 +2613,11 @@ void frame() {
   if (!g_main_thread) g_main_thread = GetCurrentThreadId();
   g_last_frame = GetTickCount64();
   link::poll();
+  g_frame_seen.store(GetTickCount64());
+  if (uint64_t at = g_quit_at.load(); at && GetTickCount64() >= at) {
+    g_video.store(false);
+    engine::command("quit", true);
+  }
   if (game::ref<uintptr_t>(game::kNetHost) <= 1 || !game::ref<void*>(game::kLevel)) return;
   if (game::ref<int>(game::kNetLocalPlayer) == 0) {
     send_rails();
@@ -3033,6 +3376,28 @@ void move_entity(unsigned id, float x, float y, float z) {
   (*reinterpret_cast<SetMatrix**>(e))[game::kEntitySetMatrix / 8](e, m, 0);
   const float* at = reinterpret_cast<const float*>(e + game::kEntityPosition);
   LOGI("net: entity %X moved from (%.2f,%.2f,%.2f) to (%.2f,%.2f,%.2f)", id, was[0], was[1], was[2], at[0], at[1], at[2]);
+}
+
+// The lab: entity `id` stands `metres` in front of the body this PC controls, facing it (turned half round).
+void place_in_front(unsigned id, float metres) {
+  uint8_t* me = controlled();
+  uint8_t* e = entity_by_id(static_cast<uint16_t>(id));
+  if (!me || !e || me == e) {
+    LOGI("net: nothing to put in front (%X)", id);
+    return;
+  }
+  const float* mm = reinterpret_cast<const float*>(me + game::kEntityMatrix);
+  float fx = mm[8], fz = mm[10];
+  float len = sqrtf(fx * fx + fz * fz);
+  if (len < 1e-3f) return;
+  fx /= len, fz /= len;
+  float m[16];
+  memcpy(m, mm, sizeof(m));
+  for (int k : {0, 1, 2, 8, 9, 10}) m[k] = -m[k];
+  m[12] = mm[12] + fx * metres, m[14] = mm[14] + fz * metres;
+  using SetMatrix = void (*)(uint8_t*, const float*, int);
+  (*reinterpret_cast<SetMatrix**>(e))[game::kEntitySetMatrix / 8](e, m, 0);
+  LOGI("net: entity %X stands %.2f m in front of the own body, facing it", id, metres);
 }
 
 bool aim_pitch_error(unsigned id, float height, float* pitch) {

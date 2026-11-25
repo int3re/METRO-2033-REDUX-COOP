@@ -24,6 +24,8 @@ void lab_trace(unsigned seconds);
 // The lab: start a motion of a thing by its name on this PC only, as a script would (the host's script: the joined
 // games get it as any other); with an unknown name, the thing's motions are listed.
 void lab_play(unsigned id, const std::string& name);
+// The lab: every motion of an entity's skeleton into motions-<id>.txt next to the exe.
+void lab_list(unsigned id);
 // The lab: the motion started last on a thing on this PC, and how far it has come.
 void lab_state(unsigned id);
 

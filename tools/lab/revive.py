@@ -31,6 +31,7 @@ def opt(name, default=None):
 seconds = int(opt("--seconds", "200"))
 hold_at = float(opt("--hold-at", "75"))
 all_down_run = "--all-down" in a  # the joiner does not raise: it goes down itself (its health set to 1 %) - everybody down
+pictures = opt("--shots")  # a folder under re/shots: pictures of the fallen host from both sides, and of the bars
 show = opt("--show")
 
 require_memory(2)
@@ -40,12 +41,22 @@ os.makedirs(dst, exist_ok=True)
 shutil.copy2(os.path.join(REPO, "re", "lab-saves", "2033_chase_fight"), os.path.join(dst, "2033_lab_start"))
 N = "".join(" | +4: !net" for _ in range(int((seconds - 60) / 4)))
 ph = host.start(seconds, "0.3: >stop_video | ?loader_finish: mapstate_running | +2.5: gameload lab_start"
-                         " | ?loader_finish: mapstate_running | +5: gamesave auto_save | ?pid==" + N, extra="[net]\nmode = host")
+                         " | ?loader_finish: mapstate_running | +5: gamesave auto_save | ?pid=="
+                + (" | ?player 0 is down | +1.5: !shot h_down | ?raises this player | +1.5: !shot h_being_raised"
+                   " | ?player 0 is up again | +2: !shot h_up" if pictures else N), extra="[net]\nmode = host")
 joiner_steps = (" | +%g: !mark down too | +0.1: !health FFFF 1 | +30: !net" % hold_at if all_down_run else
-                " | +%g: !mark hold | +0.1: !pad 4000 0 0 4000 | +6: !net | +20: !mark hold again | +0.1: !pad 4000 0 0 4000 | +6: !net" % hold_at)
+                " | +%g: !actions 60 | +0.1: !mark hold%s | +0.1: !holduse 4000%s | +6: !net | +20: !mark hold again | +0.1: !holduse 4000"
+                " | +6: !net" % (hold_at - (3 if pictures else 0), " | +0.1: !aim F0000 1500 0 50 | +0.2: !shot j_host_down" if pictures else "",
+                                  " | +1.5: !shot j_raising" if pictures else ""))
 pc = client.start(seconds, "0.3: >stop_video | 20: !finish | ?pid==" + joiner_steps,
                   bind_port=1001, autostart=False, after=(host, ph), extra="[net]\nmode = join\naddress = 127.0.0.1")
 codes = wait([ph, pc], seconds + 240)
+if pictures:
+    from lab import shots, sheet
+    for x in (host, client):
+        files = shots(x, os.path.join(REPO, "re", "shots", pictures, x.name))
+        if files:
+            print("%s: %s" % (x.name, sheet(files, os.path.join(REPO, "re", "shots", pictures, x.name, "sheet.png"), columns=3, width=480)))
 
 H, C = host.log_lines(), client.log_lines()
 has = lambda lines, text: [l for l in lines if text in l]

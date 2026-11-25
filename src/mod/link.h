@@ -13,7 +13,7 @@
 
 namespace link {
 
-constexpr uint16_t kProtocol = 2;  // changes when a message's layout or meaning does (2: kUse, 0.1.5)
+constexpr uint16_t kProtocol = 3;  // changes when a message's layout or meaning does (2: kUse, 0.1.5; 3: zones, physics, hands, 0.4.1)
 
 enum Type : uint8_t {
   kHello = 1,  // {u16 protocol; char version[16]} - both ways, once per connection
@@ -36,6 +36,9 @@ enum Type : uint8_t {
   // joined games; kMotionsAsk (empty): a joined game whose level runs asks for all of the level's so far.
   kMotions = 12,
   kMotionsAsk = 13,
+  kRaising = 14,  // a player holds Use over a fallen one (1) or let go (0): {u8 slot raised; u8 by; u8 on}
+  kHands = 15,    // the host's level script has put its player's hands away (1: a scene) or let them out (0): {u8 away}
+  kPhysics = 16,  // loose things a PC's physics moved: {u8 from slot; u8 count; {u16 id; u32 name hash; float m[12]}[count]}
 };
 
 void install();

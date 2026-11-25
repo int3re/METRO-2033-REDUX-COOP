@@ -1,4 +1,4 @@
-"""aside.py [--level level] [--seconds N] [--show regex]
+"""aside.py [--level level] [--seconds N] [--show regex] [--still]
 
 Does a player who joins stand clear of the host? The host starts l19_defence, walks forward for three seconds
 (its way is remembered), stops; then a second copy joins. The host sends its last steps with the new body, and
@@ -11,6 +11,9 @@ Checks:
   4  the joined game got the host's way and stepped aside
   5  the two bodies are more than 1 m apart on the joiner's PC ...
   6  ... and on the host's PC
+
+--still: the host does not walk (as right after a level's start). The joined game must find a free place
+around the host by the game's own ray instead (checks 3 and 4 change accordingly).
 """
 import re, sys
 from lab import Copy, wait, require_memory
@@ -30,11 +33,13 @@ def opt(name, default=None):
 level = opt("--level", r"2033\l19_defence")
 seconds = int(opt("--seconds", "110"))  # (85 left no time after a join that took 30 s)
 show = opt("--show")
+still = "--still" in a
 
 require_memory(2)
 host, client = Copy("test-m33"), Copy("test-m33b")
 begin = r"0.3: >stop_video | +0.5: disconnect | +0.5: map %s" % level
-ph = host.start(seconds, begin + " | ?^map | ?mapstate_running | +1.5: !net | +0.5: !pad 0 0 32000 3000 | +4.5: !net | ?pid== | +4: !net | +1: !net",
+walk = "" if still else " | +0.5: !pad 0 0 32000 3000"
+ph = host.start(seconds, begin + " | ?^map | ?mapstate_running | +1.5: !net" + walk + " | +4.5: !net | ?pid== | +4: !net | +1: !net",
                 extra="[net]\nmode = host")
 pc = client.start(seconds, "0.3: >stop_video | 20: !finish | ?pid== | +4: !net | +1: !net", bind_port=1001, autostart=False, after=(host, ph),
                   extra="[net]\nmode = join\naddress = 127.0.0.1")
@@ -68,8 +73,12 @@ checks = []
 checks.append(("both games ended by themselves", codes == [0, 0], str(codes)))
 bad = [c.name for c in (host, client) if has(c, "CRASH ")]
 checks.append(("no crash", not bad, ", ".join(bad)))
-checks.append(("the host had walked before the joiner came", walked > 2.0, "%.1f m" % walked))
-checks.append(("the joined game got the host's way and stepped aside", has(client, "the host's way came with the body") and bool(aside), aside))
+if still:
+    checks.append(("the host stood still", 0 <= walked < 0.5, "%.1f m" % walked))
+    checks.append(("the joined game found a free place around the host", "has not walked" in aside, aside))
+else:
+    checks.append(("the host had walked before the joiner came", walked > 2.0, "%.1f m" % walked))
+    checks.append(("the joined game got the host's way and stepped aside", has(client, "the host's way came with the body") and bool(aside), aside))
 checks.append(("the two bodies are apart on the joiner's PC", gap_c > 1.0, "%.2f m" % gap_c))
 checks.append(("the two bodies are apart on the host's PC", gap_h > 1.0, "%.2f m" % gap_h))
 

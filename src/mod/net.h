@@ -63,6 +63,8 @@ void destroy_entity(unsigned id);
 void lab_hit(unsigned attacker, unsigned victim);
 // The lab: puts an entity at a place (the game's own "set matrix", the rotation stays).
 void move_entity(unsigned id, float x, float y, float z);
+// The lab: entity `id` stands `metres` in front of the body this PC controls, facing it.
+void place_in_front(unsigned id, float metres);
 // The lab: the living things (entities with a health between 0 and 10) within `metres` of the body this PC
 // controls: id, class, health, distance, name.
 void log_near(unsigned metres);
@@ -110,6 +112,8 @@ void lab_attach(unsigned id, unsigned parent);
 void lab_leave_out(unsigned a, unsigned b);
 // The lab: every entity whose parent is `id` (FFFF = the body this PC controls), with what hangs on those.
 void log_children(unsigned id);
+// The lab: how the other players' first-person hands are put away on this PC from now on (0 = not; see hide_hands).
+void lab_hands(int mode);
 // The lab: asks the game to decide anew whether the player on this PC may take the item (entity vtbl + 0xB88).
 void refresh_item(unsigned id);
 // Main thread, host. Takes the body this game made for the slot out of the world (the player left).

@@ -96,6 +96,7 @@ bool load_config(const std::wstring& path, Config& cfg) {
   cfg.net_friendly_fire = get_int(path, L"net", L"friendly_fire", 0) != 0;
   cfg.net_ride = get_int(path, L"net", L"ride", 1) != 0;
   cfg.net_zones = get_int(path, L"net", L"zones", 1) != 0;
+  cfg.net_zone_own = get_int(path, L"net", L"zone_own", 1) != 0;
   cfg.net_actors = get_int(path, L"net", L"actors", 1) != 0;
   cfg.net_use = get_int(path, L"net", L"use", 1) != 0;
   cfg.net_missing_target = get_int(path, L"net", L"missing_target", 1) != 0;
@@ -104,6 +105,9 @@ bool load_config(const std::wstring& path, Config& cfg) {
   cfg.net_revive = get_int(path, L"net", L"revive", 1) != 0;
   cfg.net_motions = get_int(path, L"net", L"motions", 1) != 0;
   cfg.net_loot = get_int(path, L"net", L"loot", 1) != 0;
+  cfg.net_hide_hands = get_int(path, L"net", L"hide_hands", 1);
+  cfg.net_scene_hands = get_int(path, L"net", L"scene_hands", 1) != 0;
+  cfg.net_physics = get_int(path, L"net", L"physics", 1) != 0;
   cfg.net_name = get_text(path, "net", "name");
   if (cfg.net_name.size() > 48) cfg.net_name.resize(48);
   // No address: a Steam friend's game (before 0.2.0 the mode was simply off).

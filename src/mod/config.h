@@ -22,6 +22,13 @@ struct Config {
   bool net_loot = true;          // [net] loot: what one player takes (ammunition, medkits, filters), every player gets
   bool net_motions = true;       // [net] motions: the host's things (doors a character opens, gates, levers) move alike
                                  //   on every PC
+  int net_hide_hands = 1;        // [net] hide_hands: the other players' first-person hands are put away on this PC
+                                 //   (1: as the game's own "hide hands"; 2: entity flag 0x4000; 3: off the body, far
+                                 //   down; 0: left as the engine has them)
+  bool net_physics = true;       // [net] physics: crates, barrels and other loose things one PC's physics moves lie
+                                 //   alike on every PC
+  bool net_scene_hands = true;   // [net] scene_hands: while a scene of the host's level script keeps its player's hands
+                                 //   away, the joined players' hands are away too
   bool net_names = true;         // [net] names: the other players' names float over their heads
   bool net_steam = true;         // [net] steam: the game goes through Steam too, under Spacewar (0: Steam is never touched)
   std::string net_name;          // [net] name: this player's name for the others when Steam is not there (UTF-8)
@@ -32,6 +39,8 @@ struct Config {
                                  // (0: the game's own 5 - 20 s, which a slow level load of the other PC runs over)
   bool net_friendly_fire = false;  // [net] friendly_fire: players' bullets hurt each other
   bool net_ride = true;            // [net] ride: a joined player sits beside the host on a rail vehicle (0: stays where it stands)
+  bool net_zone_own = true;        // [net] zone_own: what a zone does to the player where they stand (civil mode at a
+                                   //   station, the gas mask, fire) goes by each player's own steps
   bool net_zones = true;           // [net] zones: a level's "the player walked in" zones count every player (0: each PC its own)
   bool net_actors = true;          // [net] actors: the host tells the state of the characters the engine does not send (0: for finding faults)
   bool net_use = true;             // [net] use: a door / lever / talk one player used is used on every PC (0: on that PC only)

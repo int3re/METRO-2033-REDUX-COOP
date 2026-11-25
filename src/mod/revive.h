@@ -22,6 +22,8 @@ bool me_down();
 // What a pad gives the game while this PC's player is down (buttons and sticks; the right stick stays).
 void filter_pad(void* xinput_state);
 
+// The lab: "use" is held that long, as if the pad's X were (no input of its own).
+void lab_hold_use(unsigned ms);
 // The lab: log the player's input actions for that many seconds (the game's action numbers).
 void lab_actions(unsigned seconds);
 

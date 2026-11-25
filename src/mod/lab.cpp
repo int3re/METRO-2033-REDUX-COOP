@@ -589,6 +589,20 @@ void pad_command(const char* args) {
 // controls towards the entity - sideways and up / down, at a point that many centimetres above the entity's feet
 // (100 by default: the middle of a human) - and, once it looks at it, pulls the right trigger that far, in
 // bursts. Runs on the script's thread; the next step waits for it.
+// An entity id of a lab command: F000N names the body of player slot N (the ids differ from run to run).
+unsigned lab_id(unsigned id) {
+  if (id < 0xF0000) return id;
+  struct Players {
+    uint8_t* array;
+    uint16_t capacity;
+    uint16_t size;
+  };
+  Players& p = game::ref<Players>(game::kNetPlayers);
+  unsigned slot = id - 0xF0000;
+  if (!p.array || slot >= p.size) return 0xFFFF;
+  return *reinterpret_cast<uint16_t*>(p.array + game::kNetPlayerSize * slot + 0x64);
+}
+
 void aim_command(const char* args) {
   unsigned id = 0;
   int ms = 0, trigger = 0, height = 100;
@@ -597,6 +611,7 @@ void aim_command(const char* args) {
     LOGW("lab: !aim <id hex> <ms> [trigger] [height cm]");
     return;
   }
+  id = lab_id(id);
   float last_pitch = 0;
   ULONGLONG end = GetTickCount64() + static_cast<ULONGLONG>(ms);
   float worst = 0, last = 0, distance = 0;
@@ -735,6 +750,12 @@ void own_command(const std::string& cmd) {
       engine::on_main([=] { net::move_entity(id, x, y, z); });
     return;
   }
+  if (!cmd.compare(0, 7, "!front ")) {  // !front <id hex, F000N = slot N's body> <metres>: it stands before this PC's eyes
+    unsigned id = 0;
+    float metres = 1.f;
+    if (sscanf(cmd.c_str() + 7, "%x %f", &id, &metres) >= 1) engine::on_main([id, metres] { net::place_in_front(lab_id(id), metres); });
+    return;
+  }
   if (!cmd.compare(0, 6, "!hunt ")) {
     hunt_command(cmd.c_str() + 6);
     return;
@@ -750,7 +771,12 @@ void own_command(const std::string& cmd) {
   if (!cmd.compare(0, 6, "!play ")) {  // !play <id hex> <motion name>: a thing starts a motion on this PC
     unsigned id = 0;
     char motion[96] = {};
-    if (sscanf(cmd.c_str() + 6, "%x %95s", &id, motion) >= 1) engine::on_main([id, m = std::string(motion)] { motions::lab_play(id, m); });
+    if (sscanf(cmd.c_str() + 6, "%x %95s", &id, motion) >= 1) engine::on_main([id, m = std::string(motion)] { motions::lab_play(lab_id(id), m); });
+    return;
+  }
+  if (!cmd.compare(0, 12, "!motionlist ")) {  // !motionlist <id hex>: every motion of its skeleton into a file
+    unsigned id = 0;
+    if (sscanf(cmd.c_str() + 12, "%x", &id) == 1) engine::on_main([id] { motions::lab_list(id); });
     return;
   }
   if (!cmd.compare(0, 10, "!motionof ")) {  // !motionof <id hex>: the motion started last on a thing here
@@ -779,6 +805,11 @@ void own_command(const std::string& cmd) {
     unsigned s = 60;
     sscanf(cmd.c_str() + 8, "%u", &s);
     motions::lab_trace(s);
+    return;
+  }
+  if (!cmd.compare(0, 9, "!holduse ")) {  // !holduse <ms>: "use" held without a pad (the raise of a fallen teammate)
+    unsigned ms = 0;
+    if (sscanf(cmd.c_str() + 9, "%u", &ms) == 1) revive::lab_hold_use(ms);
     return;
   }
   if (!cmd.compare(0, 8, "!actions")) {
@@ -891,6 +922,8 @@ void own_command(const std::string& cmd) {
     engine::on_main([m = static_cast<unsigned>(a)] { net::log_near(m); });
   } else if (!strcmp(name, "hit") && n >= 3) {
     engine::on_main([x = static_cast<unsigned>(a), y = static_cast<unsigned>(b)] { net::lab_hit(x, y); });
+  } else if (!strcmp(name, "hands") && n >= 2) {  // !hands <way>: the others' first-person hands (0 = left alone)
+    engine::on_main([m = static_cast<int>(a)] { net::lab_hands(m); });
   } else if (!strcmp(name, "kids") && n >= 2) {
     engine::on_main([id = static_cast<unsigned>(a)] { net::log_children(id); });
   } else if (!strcmp(name, "refresh") && n >= 2) {

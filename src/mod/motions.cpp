@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -89,7 +90,8 @@ std::unordered_map<uint16_t, Note> g_state;         // the host: the last motion
 std::unordered_map<uint16_t, uint64_t> g_sent_at;   // the host: when it was sent
 std::unordered_map<uint16_t, uint8_t*> g_state_object;
 std::vector<Note> g_outbox;                         // the host: to send at the next tick
-std::vector<std::pair<Note, uint64_t>> g_inbox;     // a joined game: to play when the level runs (note, when it came)
+std::vector<std::pair<Note, uint64_t>> g_inbox;     // to play when the level runs (note, when it came)
+std::vector<uint8_t> g_relay;                       // the host: joined games' notes to pass on to the others
 std::atomic<bool> g_loading{false};
 std::atomic<uint32_t> g_level_seq{0};
 uint32_t g_asked_seq = 0;                           // a joined game: the level it asked the host's state for
@@ -148,6 +150,17 @@ const char* motion_text(uint8_t* e, uint16_t motion) {
 std::string motion_name(uint8_t* e, uint16_t motion) {
   const char* t = motion_text(e, motion);
   return t ? std::string(t) : std::string("?");
+}
+
+// An idle: a motion a thing plays on by itself (a wire swaying, a cobweb) - each PC's own.
+bool ambient(uint8_t* e, uint16_t motion) {
+  const char* t = motion_text(e, motion);
+  if (!t) return true;
+  char low[96];
+  size_t i = 0;
+  for (; t[i] && i + 1 < sizeof(low); ++i) low[i] = static_cast<char>(tolower(static_cast<unsigned char>(t[i])));
+  low[i] = 0;
+  return strstr(low, "idle") != nullptr;
 }
 
 // A motion object's time and length, if it still is the motion it was (it may be gone: read with care).
@@ -261,6 +274,16 @@ uint8_t* on_start_motion(uint8_t* e, uint16_t motion, uint16_t part, float speed
       if (in_session() && g_outbox.size() < 4096) g_outbox.push_back(n);
     }
   }
+  // A joined game tells the host what its own script moved (a door its player's zone or use opened, which the
+  // host's script may never come to): one-off motions only - an idle that plays on by itself is each PC's own.
+  if (mine && joined && in_session() && shared_thing(e) && !ambient(e, motion)) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    bool again = prev_motion == motion && now - prev_tick > 5000;
+    if (prev_motion != motion || again) {
+      Note n{id, hash(name_of(e)), motion, part, speed, time, static_cast<uint8_t>(looped), static_cast<uint8_t>(raw)};
+      if (g_outbox.size() < 4096) g_outbox.push_back(n);
+    }
+  }
 
   if (GetTickCount64() < g_trace_until.load()) {
     static uint16_t last[65536];  // the lab: only changes are logged
@@ -366,7 +389,8 @@ bool play(const Note& n, uint64_t came) {
 }
 
 void on_note(int from, const uint8_t* data, size_t size) {
-  if (my_slot() == 0 || from != 0 || size < 1) return;  // only a joined game plays, and only the host's
+  // a joined game plays the host's; the host plays a joined game's and passes it on to the others
+  if (size < 1 || (my_slot() != 0 && from != 0) || (my_slot() == 0 && from < 1)) return;
   unsigned count = data[0];
   if (size < 1 + count * sizeof(Note)) return;
   uint64_t now = GetTickCount64();
@@ -376,6 +400,7 @@ void on_note(int from, const uint8_t* data, size_t size) {
     memcpy(&n, data + 1 + i * sizeof(Note), sizeof(Note));
     g_inbox.push_back({n, now});
   }
+  if (my_slot() == 0) g_relay.insert(g_relay.end(), data, data + size);
 }
 
 // A joined game whose level runs asks the host for the motions of the level's things so far (the host's save
@@ -438,7 +463,14 @@ void tick() {
       std::lock_guard<std::mutex> hold(g_lock);
       out.swap(g_outbox);
     }
-    if (out.empty() || !in_session() || !level_runs()) return;
+    std::vector<uint8_t> relay;
+    std::vector<std::pair<Note, uint64_t>> in;
+    {
+      std::lock_guard<std::mutex> hold(g_lock);
+      relay.swap(g_relay);
+      in.swap(g_inbox);
+    }
+    if (!in_session() || !level_runs()) return;
     for (size_t i = 0; i < out.size(); i += 60) {
       size_t k = out.size() - i < 60 ? out.size() - i : 60;
       std::vector<uint8_t> pack(1 + k * sizeof(Note));
@@ -447,6 +479,17 @@ void tick() {
       link::send(link::kMotions, pack.data(), pack.size(), true);
     }
     g_sent += static_cast<int>(out.size());
+    if (!relay.empty()) link::send(link::kMotions, relay.data(), relay.size(), true);  // (the one who sent it skips its own)
+    for (auto& [n, came] : in) {  // what a joined game's own script moved: the host's thing moves too
+      if (!play(n, came)) continue;
+      uint8_t* e = net::entity_by_id(n.id);
+      std::lock_guard<std::mutex> hold(g_lock);
+      auto s = g_started.find(n.id);
+      if (e && s != g_started.end() && s->second.synced) {  // (played here: a later joiner gets it from the host)
+        g_state[n.id] = n;
+        g_state_object[n.id] = s->second.object;
+      }
+    }
     return;
   }
   // a joined game
@@ -457,6 +500,20 @@ void tick() {
   if (g_asked_seq != seq) {
     g_asked_seq = seq;
     link::send(link::kMotionsAsk, nullptr, 0, true);
+  }
+  {
+    std::vector<Note> out;
+    {
+      std::lock_guard<std::mutex> hold(g_lock);
+      out.swap(g_outbox);
+    }
+    for (size_t i = 0; i < out.size(); i += 60) {  // this game's own one-off motions, to the host
+      size_t k = out.size() - i < 60 ? out.size() - i : 60;
+      std::vector<uint8_t> pack(1 + k * sizeof(Note));
+      pack[0] = static_cast<uint8_t>(k);
+      memcpy(pack.data() + 1, out.data() + i, k * sizeof(Note));
+      link::send(link::kMotions, pack.data(), pack.size(), true);
+    }
   }
   std::vector<std::pair<Note, uint64_t>> in;
   {
@@ -503,6 +560,19 @@ void lab_play(unsigned id, const std::string& name) {
     all += motion_name(e, static_cast<uint16_t>(i));
   }
   LOGI("lab: play: '%s' (%X) has no motion '%s'; it has %u:%s", name_of(e), id, name.c_str(), count, all.c_str());
+}
+
+void lab_list(unsigned id) {
+  uint8_t* e = net::entity_by_id(static_cast<uint16_t>(id));
+  uint8_t* table = e ? motion_table(e) : nullptr;
+  unsigned count = table ? *reinterpret_cast<uint16_t*>(table + 50) : 0;
+  char path[64];
+  snprintf(path, sizeof(path), "motions-%X.txt", id);
+  FILE* f = fopen(path, "w");
+  if (!f) return;
+  for (unsigned i = 0; i < count; ++i) fprintf(f, "%u\t%s\n", i, motion_name(e, static_cast<uint16_t>(i)).c_str());
+  fclose(f);
+  LOGI("lab: %u motions of %X '%s' written to %s", count, id, e ? name_of(e) : "-", path);
 }
 
 void lab_state(unsigned id) {

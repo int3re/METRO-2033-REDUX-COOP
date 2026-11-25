@@ -11,8 +11,9 @@ On l00_intro, host and joiner:
     scene does on the host only;
   - both start the hall door scene_hall_door_0000 (8900) "l_00_open" at the same moment, as their scripts would:
     the joined game must not start it twice;
-  - the joiner alone starts the cabinet metal_locker_0000 (1703) "idle_open": a joined game does not tell the host
-    (its own "use" goes to the host by its own way).
+  - the joiner alone starts the cabinet metal_locker_0000 (1703) "idle_open": an idle is each PC's own, not sent;
+  - the joiner alone starts the door metal_door_4 (2602) "door_murzik_start": a one-off motion of the joined game's
+    own script goes to the host.
 
 Checks: both ended, no crash; the joiner has 400 and 1401 "for the host" with the times the host has (within
 0.6 s); 8900 plays once on the joiner (no second start); the host's 1703 stays as it was; the host sent a sane
@@ -38,13 +39,13 @@ seconds = int(opt("--seconds", "110"))
 
 require_memory(2)
 host, client = Copy("test-m33"), Copy("test-m33b")
-look = " | +0.1: !motionof 400 | +0.1: !motionof 1401 | +0.1: !motionof 8900 | +0.1: !motionof 1703"
+look = " | +0.1: !motionof 400 | +0.1: !motionof 1401 | +0.1: !motionof 8900 | +0.1: !motionof 1703 | +0.1: !motionof 2602"
 h = ("0.3: >stop_video | +0.5: disconnect | +0.5: map %s | ?loader_finish: mapstate_running | +2: !play 400 half_open_01"
      " | +0.5: !motions 200 | ?pid== | +8: !mark A" % level + look +
      " | +1: !play 1401 l21_melnik_repka_use | +3: !mark B" + look +
      " | +3: !mark C | +0.1: !play 8900 l_00_open | +1: !mark C2 | +0.1: !motionof 8900 | +3: !mark D" + look + " | +4: !mark E" + look + " | +1: !motions 1")
 c = ("0.3: >stop_video | 20: !finish | ?pid== | +0.5: !motions 200 | +8: !mark A" + look +
-     " | +1: !mark joiner-cabinet | +0.1: !play 1703 idle_open | +2.9: !mark B" + look +
+     " | +1: !mark joiner-cabinet | +0.1: !play 1703 idle_open | +0.1: !play 2602 door_murzik_start | +2.8: !mark B" + look +
      " | +3: !mark C | +0.1: !play 8900 l_00_open | +1: !mark C2 | +0.1: !motionof 8900 | +3: !mark D" + look + " | +4: !mark E" + look)
 ph = host.start(seconds, h, extra="[net]\nmode = host")
 pc = client.start(seconds, c, bind_port=1001, autostart=False, after=(host, ph), extra="[net]\nmode = join\naddress = 127.0.0.1")
@@ -110,6 +111,9 @@ checks.append(("the hall door both started at once plays alike on both (no jump 
 x, y = hs.get("E", {}).get(0x1703), cs.get("E", {}).get(0x1703)
 checks.append(("a joined game's own start is not sent to the host", bool(y and y[0] == "idle_open" and (not x or x[0] != "idle_open")),
                "host %s / joiner %s" % (x, y)))
+x, y = hs.get("E", {}).get(0x2602), cs.get("E", {}).get(0x2602)
+checks.append(("a joined game's own one-off motion (a door) reaches the host", bool(y and y[0] == "door_murzik_start" and x and
+               x[0] == "door_murzik_start" and x[1] == "for the host"), "host %s / joiner %s" % (x, y)))
 sent = [int(m.group(1)) for l in host.log_lines() for m in [re.search(r"\(sent (\d+), played", l)] if m]
 checks.append(("the host sent a sane number of notes", bool(sent) and sent[-1] < 400, "sent %s" % sent[-1:]))
 
