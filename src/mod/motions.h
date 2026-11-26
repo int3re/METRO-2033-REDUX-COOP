@@ -8,6 +8,7 @@
 // The host tells every joined game which motion a thing started; a joined game starts the same motion on its
 // copy unless its own script already did.
 #pragma once
+#include <cstdint>
 #include <string>
 
 #include "mod/config.h"
@@ -18,6 +19,11 @@ void install(const Config& cfg);
 
 // Every tick of the main thread (sends the host's batch, plays what arrived).
 void tick();
+
+// This PC's player has just used that thing (a wheel held and turned, a lever): for 15 s the motions other PCs
+// tell about it are not played here - its own use moves it (0.4.5: the host's copy of the friend's use put the
+// wheel back to its idle and would turn it back under the friend's hands).
+void own_use(uint16_t id);
 
 // The lab: log every motion a thing starts (with who started it) for that many seconds.
 void lab_trace(unsigned seconds);

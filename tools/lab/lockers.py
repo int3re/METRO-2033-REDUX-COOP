@@ -80,9 +80,10 @@ checks.append(("both games ended by themselves", codes == [0, 0], str(codes)))
 bad = [x.name for x in (host, client) if has(x, "CRASH ")]
 checks.append(("no crash", not bad, ", ".join(bad)))
 checks.append(("the lists of use blocks (they may differ)", True, "host: %s; joiner: %s" % (count_blocks(host)[-1:], count_blocks(client)[-1:])))
-checks.append(("every host's use was fired on the joined PC", has(client, "player 0 used a thing (waits on") >= len(host_uses)
-               and has(client, "fired here too") >= len(host_uses) and not has(client, "has no such use block"),
-               "fired %d of %d" % (has(client, "fired here too"), len(host_uses))))
+# (since 0.4.3 a joined game does not play the host's uses: what they move comes to it as the host's motions)
+checks.append(("every host's use reached the joined PC (left to the host's motions there)",
+               has(client, "used a thing: left to the host's motions here") >= len(host_uses),
+               "%d of %d" % (has(client, "used a thing: left to the host's motions here"), len(host_uses))))
 checks.append(("every joiner's use was fired on the host's PC", has(host, "player 1 used a thing (waits on") >= len(client_uses)
                and has(host, "fired here too") >= len(client_uses) and not has(host, "has no such use block"),
                "fired %d of %d" % (has(host, "fired here too"), len(client_uses))))

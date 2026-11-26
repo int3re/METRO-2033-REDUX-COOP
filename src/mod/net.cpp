@@ -20,6 +20,7 @@
 #include "mod/engine.h"
 #include "mod/link.h"
 #include "mod/loot.h"
+#include "mod/motions.h"
 #include "mod/patch.h"
 #include "mod/steamnet.h"
 
@@ -868,6 +869,37 @@ constexpr uintptr_t kSceneBlocks[] = {
 };
 bool g_replaying_use = false;  // another player's use is being played on this PC now
 int g_scene_told = 0;
+int g_remote_depth = 0;        // inside the chain of another player's use (any of its later steps too)
+
+// The chain of another player's use goes on later by itself (a delay, the end of a step): the blocks it went
+// through are remembered for a while, and a signal out of one of them is still that player's chain.
+struct Tainted {
+  uint8_t* block;
+  uint64_t until;
+};
+std::vector<Tainted> g_tainted;
+
+void taint(uint8_t* block, uint64_t now) {
+  for (Tainted& t : g_tainted)
+    if (t.block == block) {
+      t.until = now + 25000;
+      return;
+    }
+  if (g_tainted.size() < 512) g_tainted.push_back({block, now + 25000});
+}
+
+bool tainted(const uint8_t* output, uint64_t now) {
+  if (g_tainted.empty()) return false;
+  bool hit = false;
+  size_t keep = 0;
+  for (size_t i = 0; i < g_tainted.size(); ++i) {
+    if (g_tainted[i].until <= now) continue;
+    if (output >= g_tainted[i].block && output < g_tainted[i].block + 0x100) hit = true;
+    g_tainted[keep++] = g_tainted[i];
+  }
+  g_tainted.resize(keep);
+  return hit;
+}
 
 enum ZoneScope { kScopeNone, kScopeShared, kScopeOwn };
 ZoneScope g_zone_scope = kScopeNone;
@@ -898,21 +930,45 @@ uintptr_t scene_class(const uint8_t* obj) {
   return block_class(obj);
 }
 
+// A block of the scene in another player's use: not played here (it would take this PC's player: the camera, the
+// hands, the body), only finished - its "done" (vtbl + 0x180, what each action calls when it is over: at once, or
+// at the end of its animation) - so that what the story does after it (the door, the character going on) happens.
+void finish_block(uint8_t* obj, uintptr_t cls) {
+  uint8_t* base = obj;
+  if (*reinterpret_cast<uintptr_t*>(obj) != game::at(cls) && !IsBadReadPtr(obj - 8, 8) && *reinterpret_cast<uintptr_t*>(obj - 8) == game::at(cls))
+    base = obj - 8;
+  if (g_scene_told++ < 60)
+    LOGI("net: another player's use: its scene block (+%llX) is finished here without being played", static_cast<unsigned long long>(cls));
+  reinterpret_cast<void (*)(uint8_t*)>((*reinterpret_cast<void***>(base))[0x180 / 8])(base);
+}
+
 void on_signal(uint8_t* output) {
-  if (g_replaying_use) {  // another player's use, played here: its scene stays that player's
+  uint64_t now = GetTickCount64();
+  if (g_replaying_use || tainted(output, now)) {  // another player's use, here: the story goes on, the scene stays theirs
     uint16_t n = *reinterpret_cast<uint16_t*>(output + 26);
     uint8_t** links = *reinterpret_cast<uint8_t***>(output + 16);
+    ++g_remote_depth;
     for (unsigned i = 0; i < n && links; ++i) {
       uint8_t* link = links[i];
       if (!link) continue;
       uint8_t* obj = *reinterpret_cast<uint8_t**>(link);
-      uintptr_t cls = obj ? scene_class(obj) : 0;
+      if (!obj) continue;
+      uintptr_t cls = scene_class(obj);
       if (cls) {
-        if (g_scene_told++ < 40) LOGI("net: another player's use: its scene block (+%llX) is not played on this PC's player", static_cast<unsigned long long>(cls));
+        finish_block(obj, cls);
         continue;
+      }
+      taint(obj, now);
+      if (!IsBadReadPtr(obj - 8, 8)) taint(obj - 8, now);
+      if (g_cfg.lab && g_scene_told++ < 200) {  // the lab: what the chain goes through (the classes of its blocks)
+        uintptr_t v0 = *reinterpret_cast<uintptr_t*>(obj), v8 = IsBadReadPtr(obj - 8, 8) ? 0 : *reinterpret_cast<uintptr_t*>(obj - 8);
+        LOGI("lab: another player's use goes through a block: obj %p vtbl +%llX / (-8) +%llX, fn +%llX", static_cast<void*>(obj),
+             static_cast<unsigned long long>(v0 - game::at(0)), static_cast<unsigned long long>(v8 - game::at(0)),
+             static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(*reinterpret_cast<void**>(link + 8)) - game::at(0)));
       }
       reinterpret_cast<void (*)(uint8_t*)>(*reinterpret_cast<void**>(link + 8))(obj);
     }
+    --g_remote_depth;
     return;
   }
   uint8_t* zone = g_zone_firing;
@@ -974,7 +1030,7 @@ using AttachToFn = int64_t (*)(void**, void**, void**, const float*);
 AttachToFn g_attach_to = nullptr;
 
 int64_t on_attach_to(void** child, void** parent, void** bone, const float* offset) {
-  if (g_replaying_use && child && *child && *reinterpret_cast<uint8_t**>(*child)) {
+  if ((g_replaying_use || g_remote_depth > 0) && child && *child && *reinterpret_cast<uint8_t**>(*child)) {
     uint8_t* e = *reinterpret_cast<uint8_t**>(*child) - game::kEntityHandle;
     if (is_player(*reinterpret_cast<uint16_t*>(e + game::kEntityId))) {
       LOGI("net: another player's use would hang a player's body on a thing: left out");
@@ -1274,6 +1330,7 @@ void on_use_fired(uint8_t* block, void** user) {
   note.user = user_id;
   int n = read_targets(block, note.target, 4);
   note.n = static_cast<uint8_t>(n > 0 ? n : 0);
+  for (int i = 0; i < n; ++i) motions::own_use(note.target[i]);  // (what this PC's player turns is not turned back by another PC's word)
   note.nth = 0xFFFF;
   note.count = static_cast<uint16_t>(g_use_blocks.size());
   for (size_t i = 0; i < g_use_blocks.size(); ++i)
@@ -1348,6 +1405,7 @@ void on_use_key(int, const uint8_t* data, size_t size) {
   }
   g_use_replayed = true;
   g_replaying_use = g_cfg.net_use_scene_own;
+  if (g_replaying_use) taint(chosen, GetTickCount64());
   g_use_fired(chosen, &handle);
   g_replaying_use = false;
   g_use_replayed = false;
@@ -1389,6 +1447,7 @@ void on_use(int, const uint8_t* data, size_t size) {
   }
   g_use_replayed = true;
   g_replaying_use = g_cfg.net_use_scene_own;
+  if (g_replaying_use) taint(g_use_blocks[note.nth], GetTickCount64());
   g_use_fired(g_use_blocks[note.nth], &handle);
   g_replaying_use = false;
   g_use_replayed = false;
@@ -1433,6 +1492,28 @@ void lab_uses() {
     LOGI("net:   use block %zu (%s):%s", i, block[kBlockOn] == 1 ? "on" : "off", use_block_things(block).c_str());
   }
   LOGI("net: %zu use blocks, %u of them on", g_use_blocks.size(), on);
+}
+
+void lab_use_on(unsigned target) {
+  uint16_t id = static_cast<uint16_t>(target);
+  std::vector<uint8_t*> same = blocks_waiting_on(&id, 1);
+  for (uint8_t* b : same) b[kBlockOn] = 1;
+  LOGI("net: the lab turns on the %zu use blocks waiting on %X", same.size(), id);
+}
+
+void lab_use_id(unsigned target, unsigned k) {
+  uint16_t id = static_cast<uint16_t>(target);
+  std::vector<uint8_t*> same = blocks_waiting_on(&id, 1);
+  if (k >= same.size()) {
+    LOGI("net: %X has %zu use blocks, no %u-th from the end", id, same.size(), k);
+    return;
+  }
+  uint8_t* block = same[same.size() - 1 - k];
+  uint8_t* own = controlled();
+  void* handle = own ? *reinterpret_cast<void**>(own + game::kEntityHandle) : nullptr;
+  if (!handle) return;
+  LOGI("net: the lab uses %X: block %u from the end of %zu (%s)", id, k, same.size(), block[kBlockOn] == 1 ? "on" : "off");
+  on_use_fired(block, &handle);
 }
 
 void lab_use_named(const std::string& name, unsigned k) {

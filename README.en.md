@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version 0.4.4" src="https://img.shields.io/badge/version-0.4.4-E07A1F">
+  <img alt="version 0.4.5" src="https://img.shields.io/badge/version-0.4.5-E07A1F">
   <img alt="state: trial build" src="https://img.shields.io/badge/state-trial%20build-8a2b1d">
   <img alt="Windows 10/11, 64-bit" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078d4">
   <img alt="tested: 2–3 players" src="https://img.shields.io/badge/tested-2–3%20players-4BCB3C">
@@ -107,6 +107,7 @@ LAUNCHER station). Building the mod from source - below.
   character opens too); crates, barrels and other loose things one player's physics moved lie the same for all.
 - **The menu and "use".** Esc in a session opens the normal pause menu, and the game goes on for the others. The
   scene of a "use" (a wheel, a lever) is played only by the player who used it; the others see the thing move.
+  The leading player's story learns of a joined player's "use" too, without touching the leader's camera or body.
   Print Screen puts the game's frame into the clipboard; the launcher has "window", "borderless" and "full screen".
 - **The story for all, the personal for oneself.** A zone of the level's script starts its scene for everybody
   when anybody walks in, while what the zone does to the player (the weapon lowered at a station, the gas mask and

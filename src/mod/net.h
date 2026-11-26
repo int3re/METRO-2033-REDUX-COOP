@@ -82,6 +82,9 @@ void lab_use(unsigned n);
 // The lab: fires, as this PC's player, the use block that waits on the entity with this name - the k-th of such
 // blocks counted from the one made last (a cabinet has two).
 void lab_use_named(const std::string& name, unsigned k);
+// The lab: fires, as this PC's player, the k-th use block (from the end) that waits on the entity with this id.
+void lab_use_id(unsigned id, unsigned k);
+void lab_use_on(unsigned id);  // the lab: the use blocks waiting on that entity are on (the script has not come to them)
 void lab_bring(unsigned class_rva, float metres);
 void lab_ride(unsigned id, unsigned platform);  // platform FFFF: off
 void lab_hang(unsigned id, unsigned parent);    // parent FFFF: off

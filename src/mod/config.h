@@ -50,7 +50,7 @@ struct Config {
                                  // (0: the game's own 5 - 20 s, which a slow level load of the other PC runs over)
   bool net_friendly_fire = false;  // [net] friendly_fire: players' bullets hurt each other
   bool net_ride = true;            // [net] ride: a joined player sits beside the host on a rail vehicle (0: stays where it stands)
-  bool net_use_on_host = false;    // [net] use_on_host: the host plays a joined player's use too (0.4.3: off - the
+  bool net_use_on_host = true;     // [net] use_on_host: the host plays a joined player's use too (0.4.3: off - the
                                    //   use's scene went on by its own timers on the host and pulled the host's player)
   bool net_use_on_joined = false;  // [net] use_on_joined: a joined game plays the others' uses too (0.4.2: off - the
                                    //   host's use of a wheel ran its scene there and opened the door at once)

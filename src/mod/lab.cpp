@@ -924,6 +924,10 @@ void own_command(const std::string& cmd) {
     unsigned k = 0;
     if (sscanf(cmd.c_str(), "!usename %95s %u", what, &k) >= 1)
       engine::on_main([w = std::string(what), k] { net::lab_use_named(w, k); });
+  } else if (!strcmp(name, "useon") && n >= 2) {  // !useon <entity id hex>
+    engine::on_main([id = static_cast<unsigned>(a)] { net::lab_use_on(id); });
+  } else if (!strcmp(name, "useid") && n >= 2) {  // !useid <entity id hex> [k]: use it as this PC's player
+    engine::on_main([id = static_cast<unsigned>(a), k = n >= 3 ? static_cast<unsigned>(b) : 0u] { net::lab_use_id(id, k); });
   } else if (!strcmp(name, "use") && n >= 2) {
     engine::on_main([id = static_cast<unsigned>(a)] { net::lab_use(id); });
   } else if (!strcmp(name, "world") && n >= 2) {

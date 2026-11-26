@@ -319,9 +319,19 @@ uint8_t* on_start_motion(uint8_t* e, uint16_t motion, uint16_t part, float speed
 // --- a joined game plays what the host started --------------------------------------------------------------------
 // As the game does it: the entity's lock (a script action holds it while it plays), a physical object's shell
 // kinematic for the motion as exe+236980 makes it.
+std::unordered_map<uint16_t, uint64_t> g_own_use;  // thing -> until when this PC's own use moves it
+
 bool play(const Note& n, uint64_t came) {
   uint8_t* e = net::entity_by_id(n.id);
   if (!e) return false;
+  {
+    std::lock_guard<std::mutex> hold(g_lock);
+    auto own = g_own_use.find(n.id);
+    if (own != g_own_use.end() && GetTickCount64() < own->second) {
+      LOGD("motions: '%s' is in this player's own use: the other PC's '%s' is not played", name_of(e), motion_name(e, n.motion).c_str());
+      return true;
+    }
+  }
   if (hash(name_of(e)) != n.name || !shared_thing(e)) {
     LOGD("motions: the host's %X is another thing here ('%s'): left alone", n.id, name_of(e));
     return true;
@@ -549,6 +559,11 @@ void tick() {
     std::lock_guard<std::mutex> hold(g_lock);
     g_inbox.insert(g_inbox.begin(), later.begin(), later.end());
   }
+}
+
+void own_use(uint16_t id) {
+  std::lock_guard<std::mutex> hold(g_lock);
+  g_own_use[id] = GetTickCount64() + 15000;
 }
 
 void lab_trace(unsigned seconds) {
