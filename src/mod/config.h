@@ -38,6 +38,7 @@ struct Config {
                                  //   away, the joined players' hands are away too
   bool borderless = false;       // [net] borderless: the game in a window shows without a frame over the whole monitor
                                  //   (the launcher's "Режим экрана: Без рамки"; the game's own r_fullscreen must be off)
+  bool net_menu = true;          // [net] menu: "СЕТЕВАЯ ИГРА" on the main menu's desk and its page
   bool screenshot = true;        // [video] print_screen: Print Screen puts the game's frame into the clipboard
   bool net_names = true;         // [net] names: the other players' names float over their heads
   bool net_steam = true;         // [net] steam: the game goes through Steam too, under Spacewar (0: Steam is never touched)

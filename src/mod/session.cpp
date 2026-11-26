@@ -16,6 +16,7 @@
 #include "mod/link.h"
 #include "mod/menu.h"
 #include "mod/loot.h"
+#include "mod/netmenu.h"
 #include "mod/physics.h"
 #include "mod/screenshot.h"
 #include "mod/window.h"
@@ -362,6 +363,8 @@ void back_to_menu_tick(uint64_t now, bool in_session) {
   }
 }
 
+uint64_t g_page_lobby = 0;  // a game chosen on the menu's network page (any thread sets it)
+
 void auto_tick(uint64_t now) {
   if (g_quitting.load()) return;
   back_to_menu_tick(now, g_auto != Auto::Idle);
@@ -382,6 +385,10 @@ void auto_tick(uint64_t now) {
         }
       } else if (in_menu()) {
         if (!g_menu_since) g_menu_since = now;
+        if (g_page_lobby && !g_yes_lobby) {
+          g_yes_lobby = g_page_lobby;
+          g_page_lobby = 0;
+        }
         if (g_yes_lobby) {
           uint64_t lobby = g_yes_lobby;
           g_yes_lobby = g_asked_lobby = 0;
@@ -508,6 +515,9 @@ void tick() {
 
 }  // namespace
 
+void join_game(uint64_t lobby) { g_page_lobby = lobby; }
+bool on_main_menu() { return in_menu(); }
+
 void install(const Config& cfg) {
   g_cfg = cfg;
   screenshot::install(cfg);  // (these two also without network play)
@@ -530,6 +540,8 @@ void install(const Config& cfg) {
   engine::on_tick(&loot::tick);
   physics::install(cfg);
   engine::on_tick(&physics::tick);
+  netmenu::install(cfg);
+  engine::on_tick(&netmenu::tick);
   engine::on_log(&on_log);
   engine::on_tick(&tick);
   engine::on_tick(&net::frame);

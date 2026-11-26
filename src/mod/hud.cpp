@@ -81,6 +81,18 @@ struct Progress {
 } g_progress;
 std::atomic<uint64_t> g_frames{0};
 uint32_t g_tag_colour = 0xFFE8E0C8;
+
+// A label of the main menu's desk (the network item): a place of the world, two lines, whether it is lit.
+struct DeskLabel {
+  bool on = false;
+  float x = 0, y = 0, z = 0;
+  std::string text, english, hint, hint_english;
+  std::string drawn, hint_drawn;
+  bool hot = false;
+};
+DeskLabel g_desk;
+std::atomic<float> g_desk_sx{0.f}, g_desk_sy{0.f}, g_desk_w{0.f}, g_desk_h{0.f};
+std::atomic<bool> g_desk_seen{false};
 int g_tag_alignment = 2;  // the lab tries 0, 1, 2 ("!text 9 <alignment> 0 0 <colour> x")
 
 template <typename Fn>
@@ -175,7 +187,17 @@ void on_draw(uint8_t* self) {
       ++i;
     }
   }
-  if (!lab.on && lines.empty() && tag_list.empty() && !progress.on) return;
+  DeskLabel desk;
+  {
+    std::lock_guard<std::mutex> hold(g_lock);
+    if (g_desk.on && g_desk.drawn.empty()) {
+      g_desk.drawn = to_font(has_letter(L'\u044F') ? g_desk.text : g_desk.english);
+      g_desk.hint_drawn = to_font(has_letter(L'\u044F') ? g_desk.hint : g_desk.hint_english);
+    }
+    desk = g_desk;
+  }
+  if (!desk.on) g_desk_seen.store(false);
+  if (!lab.on && lines.empty() && tag_list.empty() && !progress.on && !desk.on) return;
   void* font = *reinterpret_cast<void**>(self + kFonts[1]);
   if (font && !tag_list.empty()) {
     bool any = false;
@@ -188,6 +210,24 @@ void on_draw(uint8_t* self) {
       any = true;
     }
     if (any) flush(font);
+  }
+  if (desk.on && !desk.drawn.empty()) {
+    // the desk's own labels are big letters on its things; this one is drawn on its place in the world, centred
+    void* f = *reinterpret_cast<void**>(self + kFonts[1]);
+    Tag at{desk.x, desk.y, desk.z, ""};
+    float x, y, distance;
+    if (f && on_screen(at, &x, &y, &distance)) {
+      const float height = 0.062f, small = 0.034f;
+      uint32_t colour = desk.hot ? 0xFFFFC870 : 0xFFE8E0C8;
+      put(f, x, y - height, height, colour, desk.drawn.c_str(), 2);
+      if (!desk.hint_drawn.empty()) put(f, x, y + 0.01f, small, desk.hot ? 0xFFFFC870 : 0xC0E8E0C8, desk.hint_drawn.c_str(), 2);
+      flush(f);
+      g_desk_sx.store(x), g_desk_sy.store(y - height * 0.5f), g_desk_h.store(height * 1.6f);
+      g_desk_w.store(height * 0.55f * static_cast<float>(desk.drawn.size()));
+      g_desk_seen.store(true);
+    } else {
+      g_desk_seen.store(false);
+    }
   }
   if (lab.on) {
     void* f = *reinterpret_cast<void**>(self + kFonts[lab.font - 1]);
@@ -236,6 +276,26 @@ void progress(const std::string& text, const std::string& english, float fractio
   }
   g_progress.fraction = fraction > 1.f ? 1.f : fraction;
   g_progress.on = true;
+}
+
+void desk_label(bool on, float x, float y, float z, const std::string& text, const std::string& english, const std::string& hint,
+                const std::string& hint_english, bool hot) {
+  std::lock_guard<std::mutex> hold(g_lock);
+  if (!on) {
+    g_desk.on = false;
+    return;
+  }
+  if (!g_desk.on || g_desk.text != text || g_desk.hint != hint) {
+    g_desk.text = text, g_desk.english = english, g_desk.hint = hint, g_desk.hint_english = hint_english;
+    g_desk.drawn.clear(), g_desk.hint_drawn.clear();
+  }
+  g_desk.x = x, g_desk.y = y, g_desk.z = z, g_desk.hot = hot, g_desk.on = true;
+}
+
+bool desk_label_rect(float* cx, float* cy, float* w, float* h) {
+  if (!g_desk_seen.load()) return false;
+  *cx = g_desk_sx.load(), *cy = g_desk_sy.load(), *w = g_desk_w.load(), *h = g_desk_h.load();
+  return true;
 }
 
 void tags(std::vector<Tag> list) {

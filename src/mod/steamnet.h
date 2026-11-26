@@ -20,6 +20,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "mod/config.h"
 
@@ -43,6 +44,8 @@ struct Offer {
   std::string level;  // the level as the game names it ("2033\l01_hunter")
 };
 bool offer(Offer& out);
+// Every friend's game of this mod seen in the last 20 seconds (the menu's network page).
+std::vector<Offer> games();
 // The player's answer: yes = go there (host_address() gives the address when it is found), no = not asked
 // about this game again for a while.
 void answer_offer(uint64_t lobby, bool yes);

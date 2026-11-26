@@ -32,6 +32,13 @@ struct Tag {
 };
 void tags(std::vector<Tag> list);
 
+// A label of the main menu's desk at a place of the world: big letters and a small hint under them, lit (hot) when
+// the pointer is on it (main thread; off: taken away). Where it was drawn last (centre, width, height, in the
+// screen's -1..1): false when it is not on the screen.
+void desk_label(bool on, float x, float y, float z, const std::string& text, const std::string& english, const std::string& hint,
+                const std::string& hint_english, bool hot);
+bool desk_label_rect(float* cx, float* cy, float* w, float* h);
+
 // The lab: "!text <font 1-3> <x> <y> <height> <colour hex> <text>" keeps a line on the screen ("\xNN" = a byte);
 // "!text" alone takes it off.
 void lab_text(const char* args);

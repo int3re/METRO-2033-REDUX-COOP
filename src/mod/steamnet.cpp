@@ -53,6 +53,12 @@ std::atomic<bool> g_leave{false};
 std::atomic<uint64_t> g_offer_yes{0}, g_offer_no{0};
 Offer g_offer;            // g_lock
 bool g_have_offer = false;
+// Every friend's game of this mod found lately (the main menu's "СЕТЕВАЯ ИГРА" page lists them): lobby -> game.
+struct Seen {
+  Offer game;
+  uint64_t at = 0;
+};
+std::map<uint64_t, Seen> g_games;
 std::vector<uint32_t> g_left;              // g_lock: made-up addresses of players who have left
 std::atomic<uint64_t> g_host_heard_at{0};  // a joined game: when the host was heard last
 
@@ -460,6 +466,11 @@ void find_tick(uint64_t now) {
   }
   bool offered_lives = false;
   for (const steam::FriendGame& g : g_steam->friends_in_lobbies()) {
+    {  // a game already known stays on the menu's network page while its friend sits in that lobby
+      std::lock_guard<std::mutex> hold(g_lock);
+      auto known = g_games.find(g.lobby);
+      if (known != g_games.end()) known->second.at = now;
+    }
     if (g.lobby == offered) {
       offered_lives = true;
       continue;
@@ -506,6 +517,14 @@ void find_lobby_data(const steam::Event& e, uint64_t now) {
     return;
   }
   std::lock_guard<std::mutex> hold(g_lock);
+  {
+    Seen& s = g_games[e.id];
+    s.game.lobby = e.id;
+    s.game.level = g_steam->lobby_data(e.id, "level");
+    auto nm = g_names.find(host);
+    s.game.name = nm != g_names.end() ? nm->second : "";
+    s.at = now;
+  }
   if (g_have_offer) return;
   g_offer.lobby = e.id;
   g_offer.level = g_steam->lobby_data(e.id, "level");
@@ -765,6 +784,21 @@ uint64_t host_silent_ms() {
 void play_as_host(bool on) { g_play_host.store(on); }
 bool knocked() { return g_knocked.load(); }
 bool joining() { return g_joining.load(); }
+
+std::vector<Offer> games() {
+  std::vector<Offer> out;
+  uint64_t now = GetTickCount64();
+  std::lock_guard<std::mutex> hold(g_lock);
+  for (auto it = g_games.begin(); it != g_games.end();) {
+    if (now - it->second.at > 20000) {  // (looked at every 10 s while the menu stands: gone when not seen twice)
+      it = g_games.erase(it);
+      continue;
+    }
+    out.push_back(it->second.game);
+    ++it;
+  }
+  return out;
+}
 
 bool offer(Offer& out) {
   std::lock_guard<std::mutex> hold(g_lock);

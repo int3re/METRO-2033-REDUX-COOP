@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version 0.4.3" src="https://img.shields.io/badge/version-0.4.3-E07A1F">
+  <img alt="version 0.4.4" src="https://img.shields.io/badge/version-0.4.4-E07A1F">
   <img alt="state: trial build" src="https://img.shields.io/badge/state-trial%20build-8a2b1d">
   <img alt="Windows 10/11, 64-bit" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078d4">
   <img alt="tested: 2–3 players" src="https://img.shields.io/badge/tested-2–3%20players-4BCB3C">
@@ -95,6 +95,9 @@ LAUNCHER station). Building the mod from source - below.
 
 - **Joining with no setup.** Whoever plays the story is visible to their Steam friends; the level becomes a
   network game at the moment a friend comes in. The question "Join?" is asked by the game's own window.
+- **"Network game" in the main menu.** The main menu's desk has a "NETWORK GAME" label (a mouse click, the key N or
+  the pad's Y): the game's own notebook page lists the Steam friends playing now (name and chapter), "Join" goes
+  into the chosen one's game, "Refresh", "Back". The list follows Steam by itself.
 - **A character for everyone.** A joined player gets a body — a copy of Artyom — with all of the leading player's
   gear: three guns, ammunition, grenades, medkits. They shoot, reload and change weapons themselves.
 - **A shared world.** A joined player's bullets hurt and kill enemies; the level's scripts act on everyone; doors,
@@ -164,8 +167,8 @@ the death menu on the host. 0.4.2 is built without lab runs too.
 **Not sent between the players yet:** what story characters far from the leading player do and say when only the
 leader's script started their scene.
 
-**Not there yet:** an item of its own in the main menu (in Redux that menu is a 3D scene — labels on the things
-of a desk); the mod asks through the game's window once a friend is playing.
+**The "Network game" item** on the desk is the mod's label in the game's font (no new thing can be put into the
+desk's script); its page is the game's own notebook (the leaderboard page, which the PC build never shows).
 
 Only the GOG build of `metro.exe` from September 2014 fits. With another build the mod touches nothing and says
 so in `metronet.log`.

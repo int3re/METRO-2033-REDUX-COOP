@@ -50,6 +50,7 @@ add_library(metronet MODULE
   src/mod/physics.cpp
   src/mod/screenshot.cpp
   src/mod/window.cpp
+  src/mod/netmenu.cpp
   src/mod/lab.cpp)
 target_include_directories(metronet PRIVATE src)
 target_compile_definitions(metronet PRIVATE ${OUR_DEFS})

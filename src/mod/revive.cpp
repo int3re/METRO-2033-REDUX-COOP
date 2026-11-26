@@ -13,6 +13,7 @@
 #include "mod/engine.h"
 #include "mod/game.h"
 #include "mod/hud.h"
+#include "mod/netmenu.h"
 #include "mod/screenshot.h"
 #include "mod/link.h"
 #include "mod/net.h"
@@ -101,6 +102,7 @@ GetDataFn g_get_data_a = nullptr, g_get_data_w = nullptr;
 
 void hold_back_state(DWORD size, void* data) {
   if (size == 256 && data && (static_cast<uint8_t*>(data)[DIK_SYSRQ] & 0x80)) screenshot::key_seen();  // Print Screen
+  if (size == 256 && data && (static_cast<uint8_t*>(data)[DIK_N] & 0x80)) netmenu::key_seen();          // the network page
   if (!g_me_down.load() || !data) return;
   if (size == 256) {  // a keyboard: every key but Escape (the pause menu) and the console
     uint8_t* keys = static_cast<uint8_t*>(data);
@@ -130,6 +132,7 @@ void hold_back_data(DIDEVICEOBJECTDATA* rows, DWORD* count) {
   if (rows && count)
     for (DWORD i = 0; i < *count; ++i)
       if (rows[i].dwOfs == DIK_SYSRQ && (rows[i].dwData & 0x80)) screenshot::key_seen();  // Print Screen
+      else if (rows[i].dwOfs == DIK_N && (rows[i].dwData & 0x80)) netmenu::key_seen();
   if (!g_me_down.load() || !rows || !count) return;
   DWORD kept = 0;
   for (DWORD i = 0; i < *count; ++i) {
@@ -461,6 +464,7 @@ bool downed(int slot) { return slot >= 0 && slot < kSlots && g_down[slot].load()
 bool me_down() { return g_me_down.load(); }
 
 void filter_pad(void* xinput_state) {
+  if (xinput_state && (static_cast<Pad*>(xinput_state)->buttons & 0x8000)) netmenu::key_seen();  // Y: the network page (desk only)
   if (!g_me_down.load() || !xinput_state) return;
   Pad* p = static_cast<Pad*>(xinput_state);
   p->buttons &= 0x0010 | 0x0020;  // START, BACK (the menus)

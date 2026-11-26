@@ -97,6 +97,7 @@ bool load_config(const std::wstring& path, Config& cfg) {
   cfg.net_ride = get_int(path, L"net", L"ride", 1) != 0;
   cfg.net_zones = get_int(path, L"net", L"zones", 1) != 0;
   cfg.screenshot = get_int(path, L"video", L"print_screen", 1) != 0;
+  cfg.net_menu = get_int(path, L"net", L"menu", 1) != 0;
   cfg.borderless = get_int(path, L"net", L"borderless", 0) != 0;
   cfg.net_zone_own = get_int(path, L"net", L"zone_own", 1) != 0;
   cfg.net_use_scene_own = get_int(path, L"net", L"use_scene", 1) != 0;
