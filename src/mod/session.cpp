@@ -18,6 +18,7 @@
 #include "mod/loot.h"
 #include "mod/netmenu.h"
 #include "mod/physics.h"
+#include "mod/drive.h"
 #include "mod/screenshot.h"
 #include "mod/window.h"
 #include "mod/motions.h"
@@ -540,6 +541,8 @@ void install(const Config& cfg) {
   engine::on_tick(&loot::tick);
   physics::install(cfg);
   engine::on_tick(&physics::tick);
+  drive::install(cfg);
+  engine::on_tick(&drive::tick);
   netmenu::install(cfg);
   engine::on_tick(&netmenu::tick);
   engine::on_log(&on_log);

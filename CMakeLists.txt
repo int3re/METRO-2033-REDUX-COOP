@@ -48,6 +48,7 @@ add_library(metronet MODULE
   src/mod/motions.cpp
   src/mod/loot.cpp
   src/mod/physics.cpp
+  src/mod/drive.cpp
   src/mod/screenshot.cpp
   src/mod/window.cpp
   src/mod/netmenu.cpp

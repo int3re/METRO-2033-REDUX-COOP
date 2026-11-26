@@ -18,6 +18,9 @@
 #include "common/log.h"
 #include "mod/game.h"
 #include "mod/engine.h"
+#include "mod/drive.h"
+#include "mod/hud.h"
+#include "mod/players.h"
 #include "mod/link.h"
 #include "mod/loot.h"
 #include "mod/motions.h"
@@ -316,6 +319,14 @@ void on_console_line(char* line) {
       bool to_menu = is_command(p, "change_map") && strstr(p, "\\000");
       if (to_menu) {
         LOGI("net: a joined game leaves the session for the main menu ('%s')", p);
+      } else if (is_command(p, "gameload") && game::ref<void*>(game::kLevel)) {
+        // "Load the last checkpoint" of a joined player's pause menu: the host loads it, for everybody (a joined
+        // game cannot load on its own: its world is the host's). 0.4.5 and before: nothing happened.
+        uint8_t slot = static_cast<uint8_t>(game::ref<int>(game::kNetLocalPlayer));
+        bool sent = link::send(link::kAskLoad, &slot, 1, true);
+        LOGI("net: a joined player chose '%s': the host is asked to load the last checkpoint%s", p, sent ? "" : " (nobody to ask)");
+        hud::notice("Хост загружает последнюю контрольную точку — для всех", "The host loads the last checkpoint, for everybody", 6);
+        return;
       } else if (is_command(p, "change_map") || is_command(p, "save_player") || is_command(p, "gameload")) {
         LOGI("net: a joined game leaves '%s' to the host", p);
         return;
@@ -330,6 +341,22 @@ void on_console_line(char* line) {
     }
   }
   g_console_line(line);
+}
+
+// The host: a joined player chose "load the last checkpoint" in the pause menu - loaded for everybody, as the host's
+// own choice would be (at most once in 15 s).
+uint64_t g_asked_load_at = 0;
+
+void on_ask_load(int from, const uint8_t*, size_t) {
+  if (game::ref<int>(game::kNetLocalPlayer) != 0 || from < 1 || !game::ref<void*>(game::kLevel)) return;
+  uint64_t now = GetTickCount64();
+  if (now - g_asked_load_at < 15000) return;
+  g_asked_load_at = now;
+  std::string who = players::name(from);
+  if (who.empty()) who = "Игрок " + std::to_string(from + 1);
+  LOGI("net: player %d asks for the last checkpoint: loaded for everybody", from);
+  hud::notice(who + " загружает последнюю контрольную точку", who + " loads the last checkpoint", 6);
+  engine::command("gameload auto_save", true);
 }
 
 // The bodies the host made for the joined players (ids of the body and of everything it carries) are no part of
@@ -868,37 +895,71 @@ constexpr uintptr_t kSceneBlocks[] = {
     0xB6D750,  // actions/player/disable all use
 };
 bool g_replaying_use = false;  // another player's use is being played on this PC now
+int g_replay_slot = -1;        // ... whose
+bool g_own_chain = false;      // this PC's own player's use is being fired now
 int g_scene_told = 0;
 int g_remote_depth = 0;        // inside the chain of another player's use (any of its later steps too)
+int g_remote_slot = -1;        // ... whose
 
-// The chain of another player's use goes on later by itself (a delay, the end of a step): the blocks it went
-// through are remembered for a while, and a signal out of one of them is still that player's chain.
+// The chain of a player's use goes on later by itself (a delay, the end of a step, a held key): the blocks it went
+// through are remembered for a while with whose use it was, and a signal out of one of them is still that player's
+// chain - another player's here (its scene stays theirs), or this PC's own (drive.cpp tells the others what its
+// "motion control" blocks are told).
 struct Tainted {
   uint8_t* block;
   uint64_t until;
+  int slot;
 };
+constexpr int kZoneTagBase = 100;  // slots from here up: a zone's chain (see ZoneTag below), not a player's use
 std::vector<Tainted> g_tainted;
 
-void taint(uint8_t* block, uint64_t now) {
+void taint(uint8_t* block, uint64_t now, int slot) {
   for (Tainted& t : g_tainted)
     if (t.block == block) {
-      t.until = now + 25000;
+      t.until = now + (slot >= kZoneTagBase ? 30000 : 25000);
+      t.slot = slot;
       return;
     }
-  if (g_tainted.size() < 512) g_tainted.push_back({block, now + 25000});
+  if (g_tainted.size() < 1024) g_tainted.push_back({block, now + (slot >= kZoneTagBase ? 30000 : 25000), slot});
 }
 
-bool tainted(const uint8_t* output, uint64_t now) {
-  if (g_tainted.empty()) return false;
-  bool hit = false;
+// The chain an output (or a block) is in: the slot of the player whose use it is, else -1.
+int tainted(const uint8_t* output, uint64_t now) {
+  if (g_tainted.empty()) return -1;
+  int slot = -1;
+  uint64_t newest = 0;
   size_t keep = 0;
   for (size_t i = 0; i < g_tainted.size(); ++i) {
     if (g_tainted[i].until <= now) continue;
-    if (output >= g_tainted[i].block && output < g_tainted[i].block + 0x100) hit = true;
+    if (output >= g_tainted[i].block && output < g_tainted[i].block + 0x100 && g_tainted[i].until >= newest) {
+      slot = g_tainted[i].slot;
+      newest = g_tainted[i].until;
+    }
     g_tainted[keep++] = g_tainted[i];
   }
   g_tainted.resize(keep);
-  return hit;
+  return slot;
+}
+
+// A zone's shared event that another player's step started goes on later through its chain (a delay, a counter):
+// what that chain does to "the player" further down (civil mode at a station, the gas mask) belongs to the player
+// who walked in, not to this PC's (0.4.1 - 0.4.5: it went to everybody). The blocks of such a chain are marked with
+// a zone tag (slot numbers from 100 up); the player blocks it reaches are not fired here, but kept, and fired when
+// this PC's own player walks into the zone (or out of it, for a "leave" chain).
+struct ZoneTag {
+  uint8_t* zone;
+  bool enters;
+  std::vector<std::pair<uint8_t*, void*>> kept;  // {block, its function}
+};
+std::vector<ZoneTag> g_zone_tags;
+int g_zone_chain = -1;  // the tag of the shared event firing now (another player's step), else -1
+
+int zone_tag(uint8_t* zone, bool enters) {
+  for (size_t i = 0; i < g_zone_tags.size(); ++i)
+    if (g_zone_tags[i].zone == zone && g_zone_tags[i].enters == enters) return kZoneTagBase + static_cast<int>(i);
+  if (g_zone_tags.size() >= 256) return -1;
+  g_zone_tags.push_back({zone, enters, {}});
+  return kZoneTagBase + static_cast<int>(g_zone_tags.size() - 1);
 }
 
 enum ZoneScope { kScopeNone, kScopeShared, kScopeOwn };
@@ -942,37 +1003,96 @@ void finish_block(uint8_t* obj, uintptr_t cls) {
   reinterpret_cast<void (*)(uint8_t*)>((*reinterpret_cast<void***>(base))[0x180 / 8])(base);
 }
 
-void on_signal(uint8_t* output) {
+// The links of an output fired as the chain of player `slot`'s use: every block it reaches is that chain's.
+// Another player's: the scene blocks are only finished while that player is still at the thing (its action: the
+// hands on the wheel, the camera at it); what the chain does later - a scene the story goes on with - plays here
+// too, as any scene of the level (the user, 2026-11-26: a shared screen in a cutscene, not in an action).
+void fire_chain(uint8_t* output, int slot) {
   uint64_t now = GetTickCount64();
-  if (g_replaying_use || tainted(output, now)) {  // another player's use, here: the story goes on, the scene stays theirs
-    uint16_t n = *reinterpret_cast<uint16_t*>(output + 26);
-    uint8_t** links = *reinterpret_cast<uint8_t***>(output + 16);
-    ++g_remote_depth;
+  int me = game::ref<int>(game::kNetLocalPlayer);
+  uint16_t n = *reinterpret_cast<uint16_t*>(output + 26);
+  uint8_t** links = *reinterpret_cast<uint8_t***>(output + 16);
+  if (slot == me) {  // this PC's own: only remembered
     for (unsigned i = 0; i < n && links; ++i) {
       uint8_t* link = links[i];
       if (!link) continue;
       uint8_t* obj = *reinterpret_cast<uint8_t**>(link);
       if (!obj) continue;
-      uintptr_t cls = scene_class(obj);
-      if (cls) {
-        finish_block(obj, cls);
-        continue;
-      }
-      taint(obj, now);
-      if (!IsBadReadPtr(obj - 8, 8)) taint(obj - 8, now);
-      if (g_cfg.lab && g_scene_told++ < 200) {  // the lab: what the chain goes through (the classes of its blocks)
+      taint(obj, now, slot);
+      if (!IsBadReadPtr(obj - 8, 8)) taint(obj - 8, now, slot);
+      if (g_cfg.lab && g_scene_told++ < 200) {
         uintptr_t v0 = *reinterpret_cast<uintptr_t*>(obj), v8 = IsBadReadPtr(obj - 8, 8) ? 0 : *reinterpret_cast<uintptr_t*>(obj - 8);
-        LOGI("lab: another player's use goes through a block: obj %p vtbl +%llX / (-8) +%llX, fn +%llX", static_cast<void*>(obj),
+        LOGI("lab: this player's use goes through a block: obj %p vtbl +%llX / (-8) +%llX, fn +%llX", static_cast<void*>(obj),
              static_cast<unsigned long long>(v0 - game::at(0)), static_cast<unsigned long long>(v8 - game::at(0)),
              static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(*reinterpret_cast<void**>(link + 8)) - game::at(0)));
       }
       reinterpret_cast<void (*)(uint8_t*)>(*reinterpret_cast<void**>(link + 8))(obj);
     }
-    --g_remote_depth;
     return;
   }
+  int was_slot = g_remote_slot;
+  g_remote_slot = slot;
+  bool action = drive::acting(slot);
+  ++g_remote_depth;
+  for (unsigned i = 0; i < n && links; ++i) {
+    uint8_t* link = links[i];
+    if (!link) continue;
+    uint8_t* obj = *reinterpret_cast<uint8_t**>(link);
+    if (!obj) continue;
+    uintptr_t cls = scene_class(obj);
+    if (cls && action) {
+      finish_block(obj, cls);
+      continue;
+    }
+    if (cls && g_scene_told++ < 60)
+      LOGI("net: player %d's use is over: the scene its chain goes on with (+%llX) plays here too", slot, static_cast<unsigned long long>(cls));
+    taint(obj, now, slot);
+    if (!IsBadReadPtr(obj - 8, 8)) taint(obj - 8, now, slot);
+    if (g_cfg.lab && g_scene_told++ < 200) {  // the lab: what the chain goes through (the classes of its blocks)
+      uintptr_t v0 = *reinterpret_cast<uintptr_t*>(obj), v8 = IsBadReadPtr(obj - 8, 8) ? 0 : *reinterpret_cast<uintptr_t*>(obj - 8);
+      LOGI("lab: player %d's use goes through a block: obj %p vtbl +%llX / (-8) +%llX, fn +%llX", slot, static_cast<void*>(obj),
+           static_cast<unsigned long long>(v0 - game::at(0)), static_cast<unsigned long long>(v8 - game::at(0)),
+           static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(*reinterpret_cast<void**>(link + 8)) - game::at(0)));
+    }
+    reinterpret_cast<void (*)(uint8_t*)>(*reinterpret_cast<void**>(link + 8))(obj);
+  }
+  --g_remote_depth;
+  g_remote_slot = was_slot;
+}
+
+void on_signal(uint8_t* output) {
+  uint64_t now = GetTickCount64();
+  int me = game::ref<int>(game::kNetLocalPlayer);
+  int slot = g_replaying_use ? g_replay_slot : g_own_chain ? me : tainted(output, now);
   uint8_t* zone = g_zone_firing;
-  if (g_zone_scope == kScopeNone || !zone || output < zone || output >= zone + 0x100) return g_signal(output);
+  bool in_zone = g_zone_scope != kScopeNone && zone && output >= zone && output < zone + 0x100;
+  if (slot >= kZoneTagBase && !in_zone) {  // a zone chain another player's step started: the player blocks are kept
+    size_t t = static_cast<size_t>(slot - kZoneTagBase);
+    uint16_t n = *reinterpret_cast<uint16_t*>(output + 26);
+    uint8_t** links = *reinterpret_cast<uint8_t***>(output + 16);
+    for (unsigned i = 0; i < n && links; ++i) {
+      uint8_t* link = links[i];
+      if (!link) continue;
+      uint8_t* obj = *reinterpret_cast<uint8_t**>(link);
+      if (!obj) continue;
+      void* fn = *reinterpret_cast<void**>(link + 8);
+      uintptr_t cls = block_class(obj);
+      if (cls && t < g_zone_tags.size()) {
+        auto& kept = g_zone_tags[t].kept;
+        if (std::find(kept.begin(), kept.end(), std::make_pair(obj, fn)) == kept.end() && kept.size() < 64) kept.push_back({obj, fn});
+        if (g_zone_split_told++ < 40)
+          LOGI("net: zone %p: a player block (+%llX) further down its chain is the other player's: kept for this PC's own step",
+               g_zone_tags[t].zone, static_cast<unsigned long long>(cls));
+        continue;
+      }
+      taint(obj, now, slot);
+      if (!IsBadReadPtr(obj - 8, 8)) taint(obj - 8, now, slot);
+      reinterpret_cast<void (*)(uint8_t*)>(fn)(obj);
+    }
+    return;
+  }
+  if (slot >= 0 && slot < kZoneTagBase && !in_zone && (slot != me || g_cfg.net_drive)) return fire_chain(output, slot);
+  if (!in_zone) return g_signal(output);
   uint16_t n = *reinterpret_cast<uint16_t*>(output + 26);
   uint8_t** links = *reinterpret_cast<uint8_t***>(output + 16);
   for (unsigned i = 0; i < n && links; ++i) {
@@ -988,6 +1108,10 @@ void on_signal(uint8_t* output) {
     }
     if (personal && g_zone_split_told++ < 20)
       LOGI("net: zone %p: its player block (+%llX) fires for this PC's own step", zone, static_cast<unsigned long long>(cls));
+    if (!personal && g_zone_chain >= 0 && obj) {  // (the story's chain of another player's step: marked)
+      taint(obj, now, g_zone_chain);
+      if (!IsBadReadPtr(obj - 8, 8)) taint(obj - 8, now, g_zone_chain);
+    }
     reinterpret_cast<void (*)(uint8_t*)>(*reinterpret_cast<void**>(link + 8))(obj);
   }
 }
@@ -1030,7 +1154,8 @@ using AttachToFn = int64_t (*)(void**, void**, void**, const float*);
 AttachToFn g_attach_to = nullptr;
 
 int64_t on_attach_to(void** child, void** parent, void** bone, const float* offset) {
-  if ((g_replaying_use || g_remote_depth > 0) && child && *child && *reinterpret_cast<uint8_t**>(*child)) {
+  if ((g_replaying_use || g_remote_depth > 0) && drive::acting(g_replaying_use ? g_replay_slot : g_remote_slot) && child && *child &&
+      *reinterpret_cast<uint8_t**>(*child)) {
     uint8_t* e = *reinterpret_cast<uint8_t**>(*child) - game::kEntityHandle;
     if (is_player(*reinterpret_cast<uint16_t*>(e + game::kEntityId))) {
       LOGI("net: another player's use would hang a player's body on a thing: left out");
@@ -1056,13 +1181,26 @@ int64_t on_zone_event(ZoneEventFn original, uint8_t* callbacks, void** entity, b
   bool split = g_signal != nullptr;
   if (shared) {
     g_zone_firing = zone, g_zone_scope = split ? kScopeShared : kScopeNone;
+    g_zone_chain = split && !own_step && g_cfg.net_zone_own ? zone_tag(zone, enters) : -1;
     result = original(callbacks, &own_handle);
+    g_zone_chain = -1;
     g_zone_firing = nullptr, g_zone_scope = kScopeNone;
   }
   if (own_step && split) {
     g_zone_firing = zone, g_zone_scope = kScopeOwn;
     original(callbacks, &own_handle);
     g_zone_firing = nullptr, g_zone_scope = kScopeNone;
+    // the player blocks another player's chain of this zone came to: now this PC's player is in (or out) too
+    for (ZoneTag& t : g_zone_tags) {
+      if (t.zone != zone || t.enters != enters) continue;
+      for (auto& [obj, fn] : t.kept) {
+        if (!block_class(obj)) continue;  // (gone with its level)
+        if (g_zone_split_told++ < 40)
+          LOGI("net: zone %p: a player block of its chain (+%llX) fires for this PC's own step", zone,
+               static_cast<unsigned long long>(block_class(obj)));
+        reinterpret_cast<void (*)(uint8_t*)>(fn)(obj);
+      }
+    }
   }
   return result;
 }
@@ -1318,18 +1456,24 @@ bool use_block_alive(const uint8_t* block) {
 }
 
 void on_use_fired(uint8_t* block, void** user) {
-  g_use_fired(block, user);
-  if (g_use_replayed || !block || game::ref<uintptr_t>(game::kNetHost) <= 1 || game::ref<int>(game::kNetLocalPlayer) < 0) return;
+  if (g_use_replayed || !block || game::ref<uintptr_t>(game::kNetHost) <= 1 || game::ref<int>(game::kNetLocalPlayer) < 0 || link::peers() < 1)
+    return g_use_fired(block, user);
   uint8_t* target = user && *user ? *reinterpret_cast<uint8_t**>(*user) : nullptr;
   uint16_t user_id = target ? *reinterpret_cast<uint16_t*>(target - game::kEntityHandle + game::kEntityId) : static_cast<uint16_t>(0xFFFF);
   // only what this PC's own player did is told: a use by a body another PC leads is that PC's to tell
   uint8_t* own = controlled();
-  if (!own || user_id != *reinterpret_cast<uint16_t*>(own + game::kEntityId)) return;
+  if (!own || user_id != *reinterpret_cast<uint16_t*>(own + game::kEntityId)) return g_use_fired(block, user);
   UseKeyNote note = {};
   note.from = static_cast<uint8_t>(game::ref<int>(game::kNetLocalPlayer));
   note.user = user_id;
   int n = read_targets(block, note.target, 4);
   note.n = static_cast<uint8_t>(n > 0 ? n : 0);
+  int by = -1;
+  if (!drive::may_use(note.target, note.n, &by)) return;  // another player is at it now: only one turns a wheel
+  drive::used(note.target, note.n);
+  g_own_chain = g_cfg.net_drive;
+  g_use_fired(block, user);
+  g_own_chain = false;
   for (int i = 0; i < n; ++i) motions::own_use(note.target[i]);  // (what this PC's player turns is not turned back by another PC's word)
   note.nth = 0xFFFF;
   note.count = static_cast<uint16_t>(g_use_blocks.size());
@@ -1358,6 +1502,7 @@ void on_use_key(int, const uint8_t* data, size_t size) {
   if (g_cfg.net_use_on_joined && game::ref<int>(game::kNetLocalPlayer) == 0 && link::peers() > 1)
     link::send(link::kUseKey, data, size, true);  // to the other joined games
   if (note.from == static_cast<uint8_t>(game::ref<int>(game::kNetLocalPlayer))) return;  // this PC's own use, come back round
+  if (note.n <= 4) drive::remote_used(note.from, note.target, note.n);  // (that player's for a while: nobody else uses it)
   // (0.4.2+: a joined game does not play anybody's use. The host's use of a wheel ran its scene on the joined PC too
   // and opened the door there at once, while on the host the player still turned the wheel. What the use moves
   // - the wheel, the door, a cabinet - comes to the joined games from the host's motions, when it moves there.)
@@ -1405,7 +1550,8 @@ void on_use_key(int, const uint8_t* data, size_t size) {
   }
   g_use_replayed = true;
   g_replaying_use = g_cfg.net_use_scene_own;
-  if (g_replaying_use) taint(chosen, GetTickCount64());
+  g_replay_slot = note.from;
+  if (g_replaying_use) taint(chosen, GetTickCount64(), note.from);
   g_use_fired(chosen, &handle);
   g_replaying_use = false;
   g_use_replayed = false;
@@ -1447,7 +1593,9 @@ void on_use(int, const uint8_t* data, size_t size) {
   }
   g_use_replayed = true;
   g_replaying_use = g_cfg.net_use_scene_own;
-  if (g_replaying_use) taint(g_use_blocks[note.nth], GetTickCount64());
+  g_replay_slot = note.from;
+  drive::remote_used(note.from, nullptr, 0);
+  if (g_replaying_use) taint(g_use_blocks[note.nth], GetTickCount64(), note.from);
   g_use_fired(g_use_blocks[note.nth], &handle);
   g_replaying_use = false;
   g_use_replayed = false;
@@ -1478,6 +1626,14 @@ std::string use_block_things(uint8_t* block) {
 }
 
 }  // namespace
+
+// drive.cpp: whose use's chain a block is in (-1: none), a block given to that chain, an output fired as it.
+int chain_owner(const uint8_t* block) {
+  int slot = tainted(block, GetTickCount64());
+  return slot >= kZoneTagBase ? -1 : slot;
+}
+void tag_chain(uint8_t* block, int slot) { taint(block, GetTickCount64(), slot); }
+void fire_as(uint8_t* output, int slot) { fire_chain(output, slot); }
 
 // The lab: "!uses" lists the use blocks of the level; "!use <n>" fires one as if this PC's player had used its thing.
 void lab_uses() {
@@ -1781,6 +1937,7 @@ void install(const Config& cfg) {
     patch::hook("update one entity (lab)", game::at(0x6B1720), reinterpret_cast<void*>(&on_update_one),
                 reinterpret_cast<void**>(&g_update_one));
   }
+  link::on(link::kAskLoad, &on_ask_load);
   link::on(link::kRails, &on_rails);
   install_rails();
   link::on(link::kSeat, &on_seat);
@@ -3639,6 +3796,23 @@ void look_object(unsigned id, unsigned offset, unsigned count) {
   }
   LOGI("net: entity %X + %X -> %p (class +%llX):%s", id, offset, o,
        static_cast<unsigned long long>(*reinterpret_cast<uintptr_t*>(o) - game::at(0)), out.c_str());
+}
+
+// The lab: `count` u32 words of the object an entity's field points at, from `at` on.
+void look_deep(unsigned id, unsigned offset, unsigned at, unsigned count) {
+  uint8_t* e = id == 0xFFFF ? controlled() : entity_by_id(static_cast<uint16_t>(id));
+  uint8_t* o = e ? *reinterpret_cast<uint8_t**>(e + offset) : nullptr;
+  if (!o || IsBadReadPtr(o + at, count * 4)) {
+    LOGI("net: entity %X + %X: nothing there", id, offset);
+    return;
+  }
+  std::string out;
+  for (unsigned i = 0; i < count && i < 64; ++i) {
+    char one[32];
+    snprintf(one, sizeof(one), " +%X:%u", at + i * 4, *reinterpret_cast<uint32_t*>(o + at + i * 4));
+    out += one;
+  }
+  LOGI("net: entity %X + %X -> (class +%llX):%s", id, offset, static_cast<unsigned long long>(*reinterpret_cast<uintptr_t*>(o) - game::at(0)), out.c_str());
 }
 
 void lab_hang(unsigned id, unsigned parent) {

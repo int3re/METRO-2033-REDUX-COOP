@@ -229,6 +229,13 @@ std::string chain(int skip, int count) {
   return s;
 }
 
+std::unordered_map<uint16_t, uint64_t> g_driven;  // thing -> until when drive.cpp sends its commands instead
+
+bool driven(uint16_t id, uint64_t now) {
+  auto d = g_driven.find(id);
+  return d != g_driven.end() && now < d->second;
+}
+
 // --- every motion a thing starts --------------------------------------------------------------------------------
 using StartMotionFn = uint8_t* (*)(uint8_t*, uint16_t, uint16_t, float, uint16_t, char, void*, int);
 StartMotionFn g_start_motion = nullptr;
@@ -280,7 +287,12 @@ uint8_t* on_start_motion(uint8_t* e, uint16_t motion, uint16_t part, float speed
   // The host tells the joined games: a new motion of a thing, or the same one again after a while (a lever pulled
   // twice). A thing whose script starts its idle anew every second or two is not news.
   bool joined = game::ref<uint8_t>(game::kNetGame) && my_slot() > 0;
-  if (mine && !joined && shared_thing(e)) {  // (also before any session: a later joiner asks for all of it)
+  bool turned = false;
+  {
+    std::lock_guard<std::mutex> hold(g_lock);
+    turned = driven(id, now);
+  }
+  if (mine && !joined && !turned && shared_thing(e)) {  // (also before any session: a later joiner asks for all of it)
     std::lock_guard<std::mutex> hold(g_lock);
     auto last = g_state.find(id);
     uint64_t& sent_at = g_sent_at[id];
@@ -295,7 +307,7 @@ uint8_t* on_start_motion(uint8_t* e, uint16_t motion, uint16_t part, float speed
   }
   // A joined game tells the host what its own script moved (a door its player's zone or use opened, which the
   // host's script may never come to): one-off motions only - an idle that plays on by itself is each PC's own.
-  if (g_cfg.net_motions_back && mine && joined && in_session() && level_runs() && shared_thing(e) && !ambient(e, motion) &&
+  if (g_cfg.net_motions_back && mine && joined && !turned && in_session() && level_runs() && shared_thing(e) && !ambient(e, motion) &&
       near_own_body(e, now)) {
     std::lock_guard<std::mutex> hold(g_lock);
     bool again = prev_motion == motion && now - prev_tick > 5000;
@@ -329,6 +341,11 @@ bool play(const Note& n, uint64_t came) {
     auto own = g_own_use.find(n.id);
     if (own != g_own_use.end() && GetTickCount64() < own->second) {
       LOGD("motions: '%s' is in this player's own use: the other PC's '%s' is not played", name_of(e), motion_name(e, n.motion).c_str());
+      return true;
+    }
+    if (driven(n.id, GetTickCount64())) {
+      LOGD("motions: '%s' is turned by a player (its commands come to every PC): the note's '%s' is not played", name_of(e),
+           motion_name(e, n.motion).c_str());
       return true;
     }
   }
@@ -564,6 +581,35 @@ void tick() {
 void own_use(uint16_t id) {
   std::lock_guard<std::mutex> hold(g_lock);
   g_own_use[id] = GetTickCount64() + 15000;
+}
+
+void mark_driven(uint16_t id) {
+  std::lock_guard<std::mutex> hold(g_lock);
+  g_driven[id] = GetTickCount64() + 20000;
+}
+
+bool time_of(uint16_t id, uint16_t* motion, float* time) {
+  std::lock_guard<std::mutex> hold(g_lock);
+  auto s = g_started.find(id);
+  if (s == g_started.end()) return false;
+  float t = 0, l = 0;
+  if (!read_motion(s->second.object, s->second.motion, &t, &l)) return false;
+  *motion = s->second.motion;
+  *time = t;
+  return true;
+}
+
+void set_time(uint16_t id, uint16_t motion, float time) {
+  std::lock_guard<std::mutex> hold(g_lock);
+  auto s = g_started.find(id);
+  if (s == g_started.end() || s->second.motion != motion) return;
+  float t = 0, l = 0;
+  if (!read_motion(s->second.object, motion, &t, &l)) return;
+  float to = time < 0.f ? 0.f : (time > l ? l : time);
+  if (to - t > 0.05f || t - to > 0.05f) {
+    *reinterpret_cast<float*>(s->second.object + kMotionTime) = to;
+    LOGD("motions: %X's '%s' put from %.2f to %.2f s, as where the player turning it is", id, motion_name(net::entity_by_id(id), motion).c_str(), t, to);
+  }
 }
 
 void lab_trace(unsigned seconds) {

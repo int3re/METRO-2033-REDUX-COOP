@@ -54,6 +54,8 @@ struct Config {
                                    //   use's scene went on by its own timers on the host and pulled the host's player)
   bool net_use_on_joined = false;  // [net] use_on_joined: a joined game plays the others' uses too (0.4.2: off - the
                                    //   host's use of a wheel ran its scene there and opened the door at once)
+  bool net_drive = true;           // [net] drive: a wheel / crank one player turns is that player's alone, and every PC
+                                   //   sees it turn as far as it went there (0.4.6, drive.cpp)
   bool net_use_scene_own = true;   // [net] use_scene: when another player's "use" is played here (the door opens here
                                    //   too), its scene (camera to the wheel, the hands' animation) stays theirs
   bool net_zone_own = true;        // [net] zone_own: what a zone does to the player where they stand (civil mode at a

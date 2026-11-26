@@ -1,4 +1,5 @@
 #include "mod/menu.h"
+#include "mod/drive.h"
 #include "mod/loot.h"
 #include "mod/motions.h"
 #include "mod/netmenu.h"
@@ -814,6 +815,16 @@ void own_command(const std::string& cmd) {
     if (sscanf(cmd.c_str() + 9, "%u", &ms) == 1) revive::lab_hold_use(ms);
     return;
   }
+  if (!cmd.compare(0, 8, "!mayuse ")) {  // !mayuse <id hex>: may this player use it now (another player at it?)
+    unsigned id = 0;
+    if (sscanf(cmd.c_str() + 8, "%x", &id) == 1) drive::lab_may_use(id);
+    return;
+  }
+  if (!cmd.compare(0, 9, "!holdact ")) {  // !holdact <action> <ms>: a game input action held (35: use), as the script hears it
+    unsigned action = 0, ms = 0;
+    if (sscanf(cmd.c_str() + 9, "%u %u", &action, &ms) == 2) drive::lab_hold(action, ms);
+    return;
+  }
   if (!cmd.compare(0, 8, "!actions")) {
     unsigned s = 30;
     sscanf(cmd.c_str() + 8, "%u", &s);
@@ -911,6 +922,10 @@ void own_command(const std::string& cmd) {
     engine::on_main([x = static_cast<unsigned>(a), y = static_cast<unsigned>(b)] { net::lab_ride(x, y); });
   } else if (!strcmp(name, "hang") && n >= 3) {  // !hang <id hex, FFFF = own body> <parent id hex, FFFF = off>: the script's plain attach
     engine::on_main([x = static_cast<unsigned>(a), y = static_cast<unsigned>(b)] { net::lab_hang(x, y); });
+  } else if (!strcmp(name, "deep")) {  // !deep <id hex> <offset of a pointer hex> <from hex> <count>: u32 words there
+    unsigned id = 0, offset = 0, at = 0, count = 8;
+    if (sscanf(cmd.c_str(), "!deep %x %x %x %u", &id, &offset, &at, &count) >= 3)
+      engine::on_main([=] { net::look_deep(id, offset, at, count); });
   } else if (!strcmp(name, "mem")) {  // !mem <id hex> <offset of a pointer hex> <count>
     unsigned id = 0, offset = 0, count = 16;
     if (sscanf(cmd.c_str(), "!mem %x %x %u", &id, &offset, &count) >= 2)

@@ -101,6 +101,7 @@ bool load_config(const std::wstring& path, Config& cfg) {
   cfg.borderless = get_int(path, L"net", L"borderless", 0) != 0;
   cfg.net_zone_own = get_int(path, L"net", L"zone_own", 1) != 0;
   cfg.net_use_scene_own = get_int(path, L"net", L"use_scene", 1) != 0;
+  cfg.net_drive = get_int(path, L"net", L"drive", 1) != 0;
   cfg.net_use_on_joined = get_int(path, L"net", L"use_on_joined", 0) != 0;
   cfg.net_use_on_host = get_int(path, L"net", L"use_on_host2", 1) != 0;
   cfg.net_actors = get_int(path, L"net", L"actors", 1) != 0;

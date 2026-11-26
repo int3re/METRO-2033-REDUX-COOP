@@ -25,6 +25,14 @@ void tick();
 // wheel back to its idle and would turn it back under the friend's hands).
 void own_use(uint16_t id);
 
+// A thing a player turns by its "motion control" (drive.cpp): the commands themselves go to every PC, so for 20 s
+// its motions are not told or played as notes (they would start it anew under the turning).
+void mark_driven(uint16_t id);
+// The motion this PC started last on a thing and its time now (false: none, or its object is gone).
+bool time_of(uint16_t id, uint16_t* motion, float* time);
+// Puts that motion of a thing at a time (if it is the one the thing plays here).
+void set_time(uint16_t id, uint16_t motion, float time);
+
 // The lab: log every motion a thing starts (with who started it) for that many seconds.
 void lab_trace(unsigned seconds);
 // The lab: start a motion of a thing by its name on this PC only, as a script would (the host's script: the joined

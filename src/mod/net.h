@@ -78,6 +78,7 @@ std::string lab_tree_lock();  // lab: how the collision tree's write lock fared 
 unsigned long long lab_last_frame();  // lab: GetTickCount64 of the main loop's last turn (0: none yet)
 std::string lab_updating();  // lab, crash log: the entity this thread is updating right now (exe+6B1720)
 void lab_uses();
+void look_deep(unsigned id, unsigned offset, unsigned at, unsigned count);
 void lab_use(unsigned n);
 // The lab: fires, as this PC's player, the use block that waits on the entity with this name - the k-th of such
 // blocks counted from the one made last (a cabinet has two).

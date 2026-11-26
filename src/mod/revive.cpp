@@ -472,6 +472,8 @@ void filter_pad(void* xinput_state) {
   p->lx = p->ly = 0;  // the right stick (the look) stays
 }
 
+bool use_held() { return g_use_held.load(); }
+
 void lab_hold_use(unsigned ms) {
   g_lab_use_until.store(GetTickCount64() + ms);
   LOGI("lab: \"use\" is held for %u ms", ms);

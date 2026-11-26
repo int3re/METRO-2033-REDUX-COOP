@@ -39,6 +39,12 @@ enum Type : uint8_t {
   kRaising = 14,  // a player holds Use over a fallen one (1) or let go (0): {u8 slot raised; u8 by; u8 on}
   kHands = 15,    // the host's level script has put its player's hands away (1: a scene) or let them out (0): {u8 away}
   kPhysics = 16,  // loose things a PC's physics moved: {u8 from slot; u8 count; {u16 id; u32 name hash; float m[12]}[count]}
+  // Since 0.4.6 (drive.cpp): a player is at a thing (1) / has let go of it (0): {u8 slot; u8 on; u8 n; u16 ids[4]};
+  // a command the level's script gave the "motion control" of a thing that player turns: {u8 slot; u8 command;
+  // u8 n; u16 ids[4]; u8 from_end; u16 motion; float time}. The host passes both on to the other joined games.
+  kBusy = 17,
+  kDrive = 18,
+  kAskLoad = 19,  // a joined player chose "load the last checkpoint": {u8 slot} - the host loads it for everybody
 };
 
 void install();
