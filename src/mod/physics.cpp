@@ -70,6 +70,23 @@ const char* name_of(const uint8_t* e) {
   return str ? reinterpret_cast<const char*>(str) + 0x14 : "";
 }
 
+// How many motions the thing's skeleton has (doors, cabinets, hatches have theirs: such a thing is the motions
+// module's, never this one's - 0.4.2: a door's pose sent by physics opened it on every PC).
+unsigned motion_count(uint8_t* e) {
+  __try {
+    uint8_t* holder = *reinterpret_cast<uint8_t**>(e + 0x100);
+    if (!holder) return 0;
+    using ModelFn = uint8_t* (*)(uint8_t*);
+    uint8_t* model = reinterpret_cast<ModelFn>((*reinterpret_cast<void***>(holder))[3])(holder);
+    uint8_t* a = model ? *reinterpret_cast<uint8_t**>(model + 64) : nullptr;
+    uint8_t* b = a ? *reinterpret_cast<uint8_t**>(a + 24) : nullptr;
+    uint8_t* table = b ? *reinterpret_cast<uint8_t**>(b + 2488) : nullptr;
+    return table ? *reinterpret_cast<uint16_t*>(table + 50) : 0;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return 1;
+  }
+}
+
 // A loose physical thing of the level that its physics moves now (not a character, nothing carried, not a copy
 // the session made, nothing of the players').
 bool loose(uint8_t* e) {
@@ -80,6 +97,7 @@ bool loose(uint8_t* e) {
   if (!strncmp(name_of(e), "player", 6)) return false;
   uint8_t* shell = *reinterpret_cast<uint8_t**>(e + kShell);
   if (!shell) return false;
+  if (motion_count(e) > 0) return false;
   using KinematicFn = uint32_t (*)(uint8_t*, int);
   return !reinterpret_cast<KinematicFn>((*reinterpret_cast<void***>(shell))[kShellKinematic / 8])(shell, 8);
 }
@@ -136,6 +154,7 @@ void on_note(int, const uint8_t* data, size_t size) {
     if (!e || hash(name_of(e)) != n.name || net::parent_of(e)) continue;
     if (*reinterpret_cast<uint32_t*>(e + game::kEntityFlags) & (4u | 0x10000u)) continue;
     if ((*reinterpret_cast<void***>(e))[kVtblPlay / 8] != reinterpret_cast<void*>(game::at(kPlainPlay))) continue;
+    if (motion_count(e) > 0) continue;  // a door, a cabinet: never put by physics
     Track& t = g_tracks[n.id];
     put(e, n.m);
     read_matrix(e, t.m);

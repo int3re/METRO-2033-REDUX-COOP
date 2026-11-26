@@ -22,7 +22,7 @@
 namespace lz {
 
 constexpr int kW = 960, kH = 600;  // the window, in units of 1/96 inch
-constexpr wchar_t kLauncherVersion[] = L"1.1.0";
+constexpr wchar_t kLauncherVersion[] = L"1.2.0";
 constexpr wchar_t kRepoUrl[] = L"https://github.com/int3re/METRO-2033-REDUX-COOP";
 constexpr wchar_t kRepoText[] = L"github.com/int3re/METRO-2033-REDUX-COOP";
 

@@ -219,6 +219,7 @@ void read_values() {
   g.v.mode = mode == "host" ? Mode::Host : mode == "join" ? Mode::Join : mode == "off" ? Mode::Off : Mode::Auto;
   g.v.names = number(value_of(f, "names"), 1) != 0;
   g.v.friendly_fire = number(value_of(f, "friendly_fire"), 0) != 0;
+  g.v.borderless = number(value_of(f, "borderless"), 0) != 0;
   g.v.name = letters(value_of(f, "name"));
   g.v.address = letters(value_of(f, "address"));
 }
@@ -287,6 +288,11 @@ bool set_mode(Mode m) {
 bool set_names(bool on) {
   if (g.canned) g.v.names = on;
   return put("names", on ? "1" : "0");
+}
+
+bool set_borderless(bool on) {
+  if (g.canned) g.v.borderless = on;
+  return put("borderless", on ? "1" : "0");
 }
 
 bool set_friendly_fire(bool on) {

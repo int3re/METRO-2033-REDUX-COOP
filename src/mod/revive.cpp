@@ -13,6 +13,7 @@
 #include "mod/engine.h"
 #include "mod/game.h"
 #include "mod/hud.h"
+#include "mod/screenshot.h"
 #include "mod/link.h"
 #include "mod/net.h"
 #include "mod/patch.h"
@@ -99,6 +100,7 @@ GetStateFn g_get_state_a = nullptr, g_get_state_w = nullptr;
 GetDataFn g_get_data_a = nullptr, g_get_data_w = nullptr;
 
 void hold_back_state(DWORD size, void* data) {
+  if (size == 256 && data && (static_cast<uint8_t*>(data)[DIK_SYSRQ] & 0x80)) screenshot::key_seen();  // Print Screen
   if (!g_me_down.load() || !data) return;
   if (size == 256) {  // a keyboard: every key but Escape (the pause menu) and the console
     uint8_t* keys = static_cast<uint8_t*>(data);
@@ -125,6 +127,9 @@ HRESULT STDMETHODCALLTYPE on_get_state_w(void* dev, DWORD size, void* data) {
 
 // Buffered input: the presses are taken out (a key let go may pass, so nothing stays held).
 void hold_back_data(DIDEVICEOBJECTDATA* rows, DWORD* count) {
+  if (rows && count)
+    for (DWORD i = 0; i < *count; ++i)
+      if (rows[i].dwOfs == DIK_SYSRQ && (rows[i].dwData & 0x80)) screenshot::key_seen();  // Print Screen
   if (!g_me_down.load() || !rows || !count) return;
   DWORD kept = 0;
   for (DWORD i = 0; i < *count; ++i) {

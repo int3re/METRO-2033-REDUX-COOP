@@ -276,7 +276,25 @@ void on_video_line(const char* line) {
   else if (strstr(line, "POP PAUSE - REASON [play_video]")) g_video.store(false);
 }
 
+// The pause menu in a session. In a network game Esc asks for the pause menu "default_mp" - a page of the old
+// multiplayer of the game's makers, left without working items (0.4.1: "Esc gives a menu where nothing can be
+// chosen"). The single-player one ("default") is opened instead; it would stop the game's clock, which on the host
+// stops the world of everybody - so in a session its pause is taken off again (frame(): the menu stays, the world
+// goes on, as in any network game).
+bool g_menu_unpause = false;
+
 void on_console_line(char* line) {
+  if (line && game::ref<uintptr_t>(game::kNetHost) > 1 && game::ref<uint8_t>(game::kNetGame)) {
+    const char* q = line;
+    while (*q == ' ' || *q == '^') ++q;
+    if (is_command(q, "mainmenu") && strstr(q, "default_mp")) {
+      LOGI("net: the pause menu of a session: the single-player one instead of 'default_mp'");
+      char menu[] = "mainmenu default";
+      g_menu_unpause = true;
+      g_console_line(menu);
+      return;
+    }
+  }
   if (line) {
     const char* q = line;
     while (*q == ' ' || *q == '^') ++q;
@@ -824,6 +842,33 @@ constexpr uintptr_t kPersonalBlocks[] = {
     0xB53E60,  // actions/player/platform_attach (a lift's floor carries the player who stands on it)
     0xB54070,  // actions/player/platform_detach
 };
+// What a thing's "use" does to the player who uses it - the scene of a wheel, a lever, a hatch: the camera taken to
+// the thing, the hands' and body's animation, the player hung on the thing, the HUD hidden. When another player's
+// use is played on this PC (the door must open here too), none of that may reach this PC's player (0.4.2: "both the
+// host and the friend were pulled to the wheel, the door broke"): only the one who used it goes through the scene,
+// the others see the thing move. Blocks of these classes are left out of a replayed use, at any depth of its chain.
+constexpr uintptr_t kSceneBlocks[] = {
+    0xB5BC80,  // actions/player/hide subj
+    0xB5BAE0,  // actions/player/show subj
+    0xB5B940,  // actions/player/hide hands
+    0xB5B7A0,  // actions/player/show hands
+    0xB5B170,  // actions/player/attach camera
+    0xB5AF60,  // actions/player/lock camera
+    0xB85B50,  // actions/player/play camera-effect
+    0xB6B2B0,  // actions/player/play dof
+    0xB6E350,  // actions/player/play hud anim
+    0xB50CA0,  // actions/player/anim movement
+    0xB59AC0,  // actions/player/movement
+    0xB5D510,  // actions/player/random controls
+    0xB5C630,  // actions/player/visible hud
+    0xB5B5A0,  // actions/player/effect switcher
+    0xBE87E0,  // actions/player/play vibration
+    0xB84620,  // actions/player/savepos
+    0xB6D750,  // actions/player/disable all use
+};
+bool g_replaying_use = false;  // another player's use is being played on this PC now
+int g_scene_told = 0;
+
 enum ZoneScope { kScopeNone, kScopeShared, kScopeOwn };
 ZoneScope g_zone_scope = kScopeNone;
 uint8_t* g_zone_firing = nullptr;  // the zone block whose event runs now
@@ -842,7 +887,34 @@ uintptr_t block_class(const uint8_t* obj) {
   return 0;
 }
 
+uintptr_t scene_class(const uint8_t* obj) {
+  for (int back : {0, 8}) {
+    const uint8_t* p = obj - back;
+    if (IsBadReadPtr(p, 8)) continue;
+    uintptr_t vt = *reinterpret_cast<const uintptr_t*>(p);
+    for (uintptr_t c : kSceneBlocks)
+      if (vt == game::at(c)) return c;
+  }
+  return block_class(obj);
+}
+
 void on_signal(uint8_t* output) {
+  if (g_replaying_use) {  // another player's use, played here: its scene stays that player's
+    uint16_t n = *reinterpret_cast<uint16_t*>(output + 26);
+    uint8_t** links = *reinterpret_cast<uint8_t***>(output + 16);
+    for (unsigned i = 0; i < n && links; ++i) {
+      uint8_t* link = links[i];
+      if (!link) continue;
+      uint8_t* obj = *reinterpret_cast<uint8_t**>(link);
+      uintptr_t cls = obj ? scene_class(obj) : 0;
+      if (cls) {
+        if (g_scene_told++ < 40) LOGI("net: another player's use: its scene block (+%llX) is not played on this PC's player", static_cast<unsigned long long>(cls));
+        continue;
+      }
+      reinterpret_cast<void (*)(uint8_t*)>(*reinterpret_cast<void**>(link + 8))(obj);
+    }
+    return;
+  }
   uint8_t* zone = g_zone_firing;
   if (g_zone_scope == kScopeNone || !zone || output < zone || output >= zone + 0x100) return g_signal(output);
   uint16_t n = *reinterpret_cast<uint16_t*>(output + 26);
@@ -862,6 +934,54 @@ void on_signal(uint8_t* output) {
       LOGI("net: zone %p: its player block (+%llX) fires for this PC's own step", zone, static_cast<unsigned long long>(cls));
     reinterpret_cast<void (*)(uint8_t*)>(*reinterpret_cast<void**>(link + 8))(obj);
   }
+}
+
+// --- "the player died" in a session ------------------------------------------------------------------------------
+// A level's script ends the game on "player die" (triggers/player/player die: its callback exe+425F2C) with a death
+// camera and "show death menu" (exe+6C9820). In a network game that trigger answers to any player's death: when the
+// friend died, the host's game played its death camera and opened its death menu too, and loading the checkpoint
+// from it reloaded everybody (0.4.1, the first real game). In a session the trigger and the menu go on only on the
+// host, and only when the host's own player is dead; a joined player's dead body is replaced by the host anyway.
+using DieFn = void (*)(uint8_t*, uint8_t*);
+DieFn g_player_die = nullptr;
+using ShowDeathFn = int64_t (*)(uint8_t*);
+ShowDeathFn g_show_death = nullptr;
+
+bool death_is_this_pcs() {
+  if (game::ref<uintptr_t>(game::kNetHost) <= 1 || !game::ref<uint8_t>(game::kNetGame)) return true;  // not a session
+  if (game::ref<int>(game::kNetLocalPlayer) != 0) return false;
+  uint8_t* own = controlled();
+  return !own || !(*reinterpret_cast<float*>(own + game::kEntityHealth) > 0.f);
+}
+
+void on_player_die(uint8_t* callbacks, uint8_t* info) {
+  if (!death_is_this_pcs()) {
+    LOGI("net: the level's \"player died\" for another player's death: left out on this PC");
+    return;
+  }
+  g_player_die(callbacks, info);
+}
+
+int64_t on_show_death(uint8_t* block) {
+  if (!death_is_this_pcs()) {
+    LOGI("net: the level's death menu for another player's death: not shown on this PC");
+    return 0;
+  }
+  return g_show_death(block);
+}
+
+using AttachToFn = int64_t (*)(void**, void**, void**, const float*);
+AttachToFn g_attach_to = nullptr;
+
+int64_t on_attach_to(void** child, void** parent, void** bone, const float* offset) {
+  if (g_replaying_use && child && *child) {
+    uint8_t* own = controlled();
+    if (own && *reinterpret_cast<uint8_t**>(*child) == own + game::kEntityHandle) {
+      LOGI("net: another player's use would hang this PC's player on a thing: left out");
+      return 0;
+    }
+  }
+  return g_attach_to(child, parent, bone, offset);
 }
 
 int64_t on_zone_event(ZoneEventFn original, uint8_t* callbacks, void** entity, bool enters) {
@@ -1215,7 +1335,9 @@ void on_use_key(int, const uint8_t* data, size_t size) {
     return;
   }
   g_use_replayed = true;
+  g_replaying_use = g_cfg.net_use_scene_own;
   g_use_fired(chosen, &handle);
+  g_replaying_use = false;
   g_use_replayed = false;
   LOGI("net: player %d used a thing (waits on %u: %X %X %X %X; %d such block%s here, the one fired is %s): fired here too",
        static_cast<int>(note.from), note.n, note.target[0], note.target[1], note.target[2], note.target[3], candidates,
@@ -1242,7 +1364,9 @@ void on_use(int, const uint8_t* data, size_t size) {
     return;
   }
   g_use_replayed = true;
+  g_replaying_use = g_cfg.net_use_scene_own;
   g_use_fired(g_use_blocks[note.nth], &handle);
+  g_replaying_use = false;
   g_use_replayed = false;
   LOGI("net: player %d used a thing (use block %u of %u, as body %X): fired here too", static_cast<int>(note.from), note.nth, note.count,
        *reinterpret_cast<uint16_t*>(user + game::kEntityId));
@@ -1526,9 +1650,15 @@ void install(const Config& cfg) {
   if (cfg.net_zones) {
     patch::hook("zone: enter", game::at(0x4AEFB4), reinterpret_cast<void*>(&on_zone_enter), reinterpret_cast<void**>(&g_zone_enter));
     patch::hook("zone: leave", game::at(0x4AF530), reinterpret_cast<void*>(&on_zone_leave), reinterpret_cast<void**>(&g_zone_leave));
-    if (cfg.net_zone_own)
-      patch::hook("zone: the player's own blocks", game::at(0x706270), reinterpret_cast<void*>(&on_signal), reinterpret_cast<void**>(&g_signal));
   }
+  if ((cfg.net_zones && cfg.net_zone_own) || (cfg.net_use && cfg.net_use_scene_own))
+    patch::hook("script signals: the player's own blocks", game::at(0x706270), reinterpret_cast<void*>(&on_signal), reinterpret_cast<void**>(&g_signal));
+  if (cfg.net_mode != Config::NetMode::Off) {
+    patch::hook("the level's player died", game::at(0x425F2C), reinterpret_cast<void*>(&on_player_die), reinterpret_cast<void**>(&g_player_die));
+    patch::hook("the level's death menu", game::at(0x6C9820), reinterpret_cast<void*>(&on_show_death), reinterpret_cast<void**>(&g_show_death));
+  }
+  if (cfg.net_use && cfg.net_use_scene_own)
+    patch::hook("script attach", game::at(game::kAttachTo), reinterpret_cast<void*>(&on_attach_to), reinterpret_cast<void**>(&g_attach_to));
   if (cfg.net_use) {
     patch::hook("use block made", game::at(kUseBlockMade), reinterpret_cast<void*>(&on_use_block_made), reinterpret_cast<void**>(&g_use_block_made));
     patch::hook("use: fired", game::at(kUseFired), reinterpret_cast<void*>(&on_use_fired), reinterpret_cast<void**>(&g_use_fired));
@@ -1892,11 +2022,131 @@ void bind_hud(uint8_t* body) {
        !before ? "nobody" : before == body ? "it already" : "another body");
 }
 
+// --- a joined player's own ammunition and money ------------------------------------------------------------
+// Every body the host gives a joined player is a copy of the host's own player, with the host's inventory: at a
+// level change, after a death, at every new join the joined player's rounds - the military ones are the money -
+// were the host's again (0.4.1: "the money of each player"). A joined game keeps what its own player carries now
+// (each pack's number, every second, by the pack's kind: its name without the "_0013" the level gave it), and
+// puts those numbers into the packs of its next body. The packs are counted on this PC only (the host never asks):
+// shooting and trading go by them. A kind the next body has no pack of is lost; weapons, medkits and filters are
+// still the host's copy.
+constexpr size_t kAmmoCount = 0x4F4;          // ammunition entity + : u32 rounds (read: vtbl + 0xE78)
+constexpr uintptr_t kAmmoSetCount = 0x2B2720; // (entity*, int rounds): the game's own setter (the HUD follows it)
+constexpr size_t kItemEntity = 0x430;         // an inventory's item = its entity + this
+constexpr size_t kInventoryItems = 0xF0, kInventoryItemCount = 0xFA;
+
+std::vector<std::pair<std::string, uint32_t>> g_gear;  // the kinds and numbers this PC's player carried last
+uint16_t g_gear_body = 0xFFFF;                          // the body they were read from
+uint64_t g_gear_at = 0;
+bool g_gear_loaded = false;
+
+// The numbers are kept in a file too (metronet\gear.txt in %APPDATA%; the lab: its own user folder), so that
+// they last over a restart of the game: the next session's first body gets them as well.
+std::wstring gear_file() {
+  wchar_t folder[MAX_PATH] = {};
+  if (!g_cfg.lab_userdir.empty())
+    lstrcpynW(folder, g_cfg.lab_userdir.c_str(), MAX_PATH);
+  else if (g_cfg.lab || !SHGetSpecialFolderPathW(nullptr, folder, CSIDL_APPDATA, FALSE))
+    return L"";
+  std::wstring dir = std::wstring(folder) + L"\\metronet";
+  CreateDirectoryW(dir.c_str(), nullptr);
+  return dir + L"\\gear.txt";
+}
+
+void load_gear() {
+  if (g_gear_loaded) return;
+  g_gear_loaded = true;
+  std::wstring path = gear_file();
+  FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"r");
+  if (!f) return;
+  char kind[96];
+  unsigned rounds = 0;
+  while (fscanf(f, "%95s %u", kind, &rounds) == 2) g_gear.push_back({kind, rounds});
+  fclose(f);
+  LOGI("net: this player's own rounds from the last game: %zu kinds", g_gear.size());
+}
+
+void save_gear() {
+  std::wstring path = gear_file();
+  FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"w");
+  if (!f) return;
+  for (const auto& [kind, rounds] : g_gear) fprintf(f, "%s %u\n", kind.c_str(), rounds);
+  fclose(f);
+}
+
+std::string ammo_kind(const uint8_t* e) {
+  const uint8_t* name = *reinterpret_cast<uint8_t* const*>(e + game::kEntityName);
+  std::string s = name ? reinterpret_cast<const char*>(name) + 0x14 : "";
+  size_t cut = s.find_last_of('_');
+  if (cut != std::string::npos && cut + 1 < s.size() && s.find_first_not_of("0123456789", cut + 1) == std::string::npos)
+    s.resize(cut);
+  return s;
+}
+
+template <typename Fn>
+void each_ammo(uint8_t* body, Fn fn) {
+  uint8_t* inv = *reinterpret_cast<uint8_t**>(body + game::kActorInventory);
+  if (!inv || *reinterpret_cast<uintptr_t*>(inv) != game::at(game::kPlayerInventory)) return;
+  uint8_t** items = *reinterpret_cast<uint8_t***>(inv + kInventoryItems);
+  unsigned n = *reinterpret_cast<uint16_t*>(inv + kInventoryItemCount);
+  for (unsigned k = 0; k < n && k < 256 && items; ++k) {
+    uint8_t* item = items[k];
+    if (!item) continue;
+    uint8_t* e = item - kItemEntity;
+    if (IsBadReadPtr(e, 0x500) || *reinterpret_cast<uintptr_t*>(e) != game::at(game::kAmmoClass)) continue;
+    fn(e);
+  }
+}
+
+void keep_gear() {
+  if (!g_cfg.net_own_gear || game::ref<int>(game::kNetLocalPlayer) <= 0 || g_own_body != 0xFFFF) return;
+  uint8_t* own = controlled();
+  if (!own || *reinterpret_cast<uint16_t*>(own + game::kEntityId) != g_gear_body) return;
+  if (!(*reinterpret_cast<float*>(own + game::kEntityHealth) > 0.f)) return;
+  uint64_t now = GetTickCount64();
+  if (now - g_gear_at < 1000) return;
+  g_gear_at = now;
+  std::vector<std::pair<std::string, uint32_t>> now_carried;
+  each_ammo(own, [&](uint8_t* e) { now_carried.push_back({ammo_kind(e), *reinterpret_cast<uint32_t*>(e + kAmmoCount)}); });
+  if (!now_carried.empty() && now_carried != g_gear) {
+    g_gear.swap(now_carried);
+    save_gear();
+  }
+}
+
+// A new body of this PC's player: its packs get the numbers the player carried (none on the first body of the run).
+void give_gear(uint8_t* body) {
+  uint16_t id = *reinterpret_cast<uint16_t*>(body + game::kEntityId);
+  if (g_cfg.net_own_gear) load_gear();
+  if (!g_cfg.net_own_gear || g_gear.empty()) {
+    g_gear_body = id;
+    return;
+  }
+  int set = 0;
+  std::string said;
+  each_ammo(body, [&](uint8_t* e) {
+    std::string kind = ammo_kind(e);
+    for (const auto& [k, rounds] : g_gear) {
+      if (k != kind) continue;
+      uint32_t was = *reinterpret_cast<uint32_t*>(e + kAmmoCount);
+      if (was != rounds) {
+        reinterpret_cast<void (*)(uint8_t*, int)>(game::at(kAmmoSetCount))(e, static_cast<int>(rounds));
+        ++set;
+        if (said.size() < 300) said += " " + kind + " " + std::to_string(was) + "->" + std::to_string(rounds);
+      }
+      break;
+    }
+  });
+  g_gear_body = id;
+  LOGI("net: the own body %X carries this player's own rounds again (%d packs changed:%s)", id, set, said.c_str());
+}
+
 // A joined game has just been given its body. The copy comes with the weapons in their slots but with no weapon
 // "in the hands" of its own - the picture on the screen is still the host's weapon from the loaded level, and the
 // first shot comes from whatever slot the inventory happens to stand on. The main weapon is taken into the
 // hands the way the keys do it: slot 16 (the third slot of Redux), else 2, else 1.
 void own_body_ready(uint8_t* body) {
+  give_gear(body);
   uint8_t* inv = *reinterpret_cast<uint8_t**>(body + game::kActorInventory);
   if (!inv || *reinterpret_cast<uintptr_t*>(inv) != game::at(game::kPlayerInventory)) {
     LOGW("net: the own body %X has no player's inventory", *reinterpret_cast<uint16_t*>(body + game::kEntityId));
@@ -2396,6 +2646,7 @@ void lab_hands(int mode) {
 void tick() {
   hide_others_hands();
   scene_hands();
+  keep_gear();
   if (game::ref<uintptr_t>(game::kNetHost) > 1 && game::ref<int>(game::kNetLocalPlayer) > 0) settle_actors();
   if (game::ref<uintptr_t>(game::kNetHost) > 1) keep_host_way();
   if (g_own_body != 0xFFFF) {
@@ -2403,6 +2654,7 @@ void tick() {
     uint8_t* body = entity_by_id(g_own_body);
     if (!body || now - g_own_body_at > 15000) {
       g_own_body = 0xFFFF;
+      g_gear_body = 0xFFFF;  // (never read the rounds of a body that was not handed over: they are the host's)
     } else if (now - g_own_body_at >= 300 && controlled() == body) {
       g_own_body = 0xFFFF;
       own_body_ready(body);
@@ -2619,6 +2871,21 @@ void frame() {
     engine::command("quit", true);
   }
   if (game::ref<uintptr_t>(game::kNetHost) <= 1 || !game::ref<void*>(game::kLevel)) return;
+  if (g_menu_unpause) {  // the pause menu opened in a session: its pause comes off, the menu stays
+    uint8_t* loader = reinterpret_cast<uint8_t*>(game::at(game::kLoader));
+    uint16_t n = *reinterpret_cast<uint16_t*>(loader + game::kPauseStack + 0xA);
+    void** stack = *reinterpret_cast<void***>(loader + game::kPauseStack);
+    for (int i = n - 1; i >= 0 && stack; --i) {
+      const char* name = stack[i] ? static_cast<const char*>(stack[i]) + 0x14 : "";
+      if (!strcmp(name, "ui_menu [default]")) {
+        void* handle = stack[i];
+        g_menu_unpause = false;
+        LOGI("net: the pause menu of a session does not stop the world: its pause is taken off");
+        reinterpret_cast<void (*)(void*, void**)>(game::at(game::kPausePop))(loader, &handle);
+        break;
+      }
+    }
+  }
   if (game::ref<int>(game::kNetLocalPlayer) == 0) {
     send_rails();
     if (g_cfg.net_actors) send_actors();

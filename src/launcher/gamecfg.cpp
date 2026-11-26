@@ -6,6 +6,7 @@
 // field of view runs from 45 to 90, gamma from 0.5 to 1.5, the mouse's sensitivity from 0.1 to 2, the aim
 // assist from 0 to 1. The keys below are the game's built-in ones.
 #include "launcher/gamecfg.h"
+#include "launcher/modset.h"
 
 #include <windows.h>
 
@@ -143,7 +144,7 @@ struct Info {
 };
 const Info kInfo[kRows] = {
     {L"Разрешение", "res", Kind::Choice, "r_res_hor", "r_res_vert"},
-    {L"На весь экран", "fullscreen", Kind::Switch, "r_fullscreen", nullptr},
+    {L"Режим экрана", "fullscreen", Kind::Choice, "r_fullscreen", nullptr},
     {L"Вертикальная синхронизация", "vsync", Kind::Switch, "r_vsync", nullptr},
     {L"Качество", "quality", Kind::Choice, "r_quality_level", nullptr},
     {L"Сглаживание SSAA", "ssaa", Kind::Choice, "r_supersample", "r_enum_ssaa"},
@@ -534,6 +535,7 @@ int count(Row r) {
     case kTess: return 4;
     case kBlur: return 2;
     case kVibration: return 4;
+    case kFullscreen: return 3;
     default: return kInfo[r].kind == Kind::Switch ? 2 : 0;
   }
 }
@@ -558,6 +560,8 @@ int value(Row r) {
     }
     case kTess:
       return atoi(v.c_str()) == 0 ? 0 : 1 + std::clamp(atoi(get("r_tess_ss").c_str()), 0, 2);
+    case kFullscreen:  // the game's framed window, the mod's frameless one over the monitor, the game's full screen
+      return on(v) ? 2 : (mset::get().borderless ? 1 : 0);
     default:
       if (kInfo[r].kind == Kind::Switch) return on(v) ? 1 : 0;
       return std::clamp(atoi(v.c_str()), 0, std::max(count(r) - 1, 0));
@@ -577,6 +581,7 @@ std::wstring name(Row r, int v) {
     case kTess: return tess[v];
     case kBlur: return v ? L"Обычное" : L"Выкл";
     case kVibration: return vibration[v];
+    case kFullscreen: return v == 0 ? L"В окне" : v == 1 ? L"Без рамки" : L"Во весь экран";
     default: return v ? L"ВКЛ" : L"ВЫКЛ";
   }
 }
@@ -599,6 +604,13 @@ bool set(Row r, int v) {
       break;
     case kTess:
       out = {{"r_dx11_tess", v ? "1" : "0"}, {"r_tess_ss", std::to_string(v > 1 ? v - 1 : 0)}};
+      break;
+    case kFullscreen:
+      if (mset::has_ini() && !mset::set_borderless(v == 1)) {
+        g.error = mset::error();
+        return false;
+      }
+      out = {{"r_fullscreen", v == 2 ? "on" : "off"}};
       break;
     default:
       if (kInfo[r].kind == Kind::Switch) out = {{kInfo[r].name, v ? "on" : "off"}};

@@ -17,6 +17,8 @@
 #include "mod/menu.h"
 #include "mod/loot.h"
 #include "mod/physics.h"
+#include "mod/screenshot.h"
+#include "mod/window.h"
 #include "mod/motions.h"
 #include "mod/net.h"
 #include "mod/patch.h"
@@ -508,6 +510,10 @@ void tick() {
 
 void install(const Config& cfg) {
   g_cfg = cfg;
+  screenshot::install(cfg);  // (these two also without network play)
+  engine::on_tick(&screenshot::tick);
+  window::install(cfg);
+  engine::on_tick(&window::tick);
   if (cfg.net_mode == Config::NetMode::Off) return;
   LOGI("session: mode %s%s%s", cfg.net_mode == Config::NetMode::Auto ? "auto" : cfg.net_mode == Config::NetMode::Host ? "host" : "join",
        cfg.net_mode == Config::NetMode::Join ? ", address " : "", cfg.net_mode == Config::NetMode::Join ? cfg.net_address.c_str() : "");

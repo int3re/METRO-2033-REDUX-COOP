@@ -20,15 +20,25 @@ struct Config {
   bool net_revive = true;        // [net] revive: a player who would die falls, a teammate raises them; the checkpoint
                                  // only when everybody is down (0: death as in single player)
   bool net_loot = true;          // [net] loot: what one player takes (ammunition, medkits, filters), every player gets
+  bool net_motions_back = false; // [net] motions_back: a joined game's own one-off motions go to the host too (0.4.1 had it
+                                 //   on: the motions its level load sets the doors and cabinets with went to the host, and
+                                 //   every door and box stood open for everybody)
   bool net_motions = true;       // [net] motions: the host's things (doors a character opens, gates, levers) move alike
                                  //   on every PC
-  int net_hide_hands = 1;        // [net] hide_hands: the other players' first-person hands are put away on this PC
+  int net_hide_hands = 0;        // [net] hide_hands: the other players' first-person hands are put away on this PC
+                                 //   (0.4.2: off - the game's "hide hands" goes through the server and took the hands of
+                                 //   that player on every PC, theirs too: nobody could pick anything up)
                                  //   (1: as the game's own "hide hands"; 2: entity flag 0x4000; 3: off the body, far
                                  //   down; 0: left as the engine has them)
+  bool net_own_gear = true;      // [net] own_gear: a joined player's rounds (and the military ones - the money) go with
+                                 //   them to their next body (a level change, a death) instead of the host's
   bool net_physics = true;       // [net] physics: crates, barrels and other loose things one PC's physics moves lie
                                  //   alike on every PC
-  bool net_scene_hands = true;   // [net] scene_hands: while a scene of the host's level script keeps its player's hands
+  bool net_scene_hands = false;  // [net] scene_hands (0.4.2: off, the same way as hide_hands): while a scene of the host's level script keeps its player's hands
                                  //   away, the joined players' hands are away too
+  bool borderless = false;       // [net] borderless: the game in a window shows without a frame over the whole monitor
+                                 //   (the launcher's "Режим экрана: Без рамки"; the game's own r_fullscreen must be off)
+  bool screenshot = true;        // [video] print_screen: Print Screen puts the game's frame into the clipboard
   bool net_names = true;         // [net] names: the other players' names float over their heads
   bool net_steam = true;         // [net] steam: the game goes through Steam too, under Spacewar (0: Steam is never touched)
   std::string net_name;          // [net] name: this player's name for the others when Steam is not there (UTF-8)
@@ -39,6 +49,8 @@ struct Config {
                                  // (0: the game's own 5 - 20 s, which a slow level load of the other PC runs over)
   bool net_friendly_fire = false;  // [net] friendly_fire: players' bullets hurt each other
   bool net_ride = true;            // [net] ride: a joined player sits beside the host on a rail vehicle (0: stays where it stands)
+  bool net_use_scene_own = true;   // [net] use_scene: when another player's "use" is played here (the door opens here
+                                   //   too), its scene (camera to the wheel, the hands' animation) stays theirs
   bool net_zone_own = true;        // [net] zone_own: what a zone does to the player where they stand (civil mode at a
                                    //   station, the gas mask, fire) goes by each player's own steps
   bool net_zones = true;           // [net] zones: a level's "the player walked in" zones count every player (0: each PC its own)

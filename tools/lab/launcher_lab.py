@@ -524,7 +524,7 @@ def s_window(feed):
 
 # The game's own values for each row: (the launcher's name of the row, [what user.cfg holds for each value, in order]).
 CHOICES = [
-    ("fullscreen", [["r_fullscreen off"], ["r_fullscreen on"]]),
+    ("fullscreen", [["r_fullscreen off"], ["r_fullscreen off"], ["r_fullscreen on"]]),  # window, frameless (metronet.ini), full
     ("vsync", [["r_vsync off"], ["r_vsync on"]]),
     ("quality", [["r_quality_level %d" % i] for i in range(4)]),
     ("ssaa", [["r_supersample 1.", "r_enum_ssaa 10"], ["r_supersample 0.5", "r_enum_ssaa 5"], ["r_supersample 2.", "r_enum_ssaa 20"],
@@ -702,7 +702,7 @@ def reset_mod():
 def s_update():
     print("update: a newer mod comes inside a newer launcher from the local feed")
     newer = "0.%d.%d" % (int(MOD_VERSION.split(".")[1]) + 1, 0)
-    made = launcher_newer.main(BUILT, FEED, newer, "1.1.1")
+    made = launcher_newer.main(BUILT, FEED, newer, "1.2.1")
     feed = launcher_feed.Feed(FEED, "release")
     fresh_app()
     ini = read(os.path.join(GAME, "metronet.ini"))
@@ -713,7 +713,7 @@ def s_update():
     check("it downloads the release's launcher and checks it", ("job: install %s from GitHub" % newer) in text and "downloaded 100%" in text)
     check("the mod in the game folder is %s now (%s)" % (newer, installed_version(GAME)), installed_version(GAME) == newer)
     check("then: ready on %s" % newer, len(st) == 2 and "screen ready" in st[1] and ("mod %s " % newer) in st[1])
-    check("the launcher's own file became the release's (1.1.1)", sha(MINE) == made["sha256"] and "launcher replaced by 1.1.1" in text)
+    check("the launcher's own file became the release's (1.2.1)", sha(MINE) == made["sha256"] and "launcher replaced by 1.2.1" in text)
     check("the player's metronet.ini was not touched by the update", read(os.path.join(GAME, "metronet.ini")) == ini)
     feed.stop()
     return newer
@@ -722,7 +722,7 @@ def s_update():
 def s_old_settings():
     print("old-settings: the settings 1.0.0 wrote (auto_install = 0, nobody chose it): a newer mod installs by itself")
     newer = "0.%d.%d" % (int(MOD_VERSION.split(".")[1]) + 1, 0)
-    launcher_newer.main(BUILT, FEED, newer, "1.1.1")
+    launcher_newer.main(BUILT, FEED, newer, "1.2.1")
     feed = launcher_feed.Feed(FEED, "release")
     fresh_app()
     reset_mod()
@@ -756,16 +756,16 @@ def s_bad_sum(newer):
 
 def s_self_update():
     print("self-update: a newer launcher with the same mod takes this one's place at the start")
-    made = launcher_newer.main(BUILT, FEED, MOD_VERSION, "1.1.1")
+    made = launcher_newer.main(BUILT, FEED, MOD_VERSION, "1.2.1")
     feed = launcher_feed.Feed(FEED, "release")
     fresh_app()
     reset_mod()
     text = drive("self-update", "wait:60000;quit", repo=feed.url, auto_self=True, next_script="until:ready:30000;wait:1500;state;quit",
                  timeout=120, ends=2)
-    check("the launcher downloads the newer launcher by itself", "job: a newer launcher, 1.1.1" in text and "launcher replaced by 1.1.1" in text)
+    check("the launcher downloads the newer launcher by itself", "job: a newer launcher, 1.2.1" in text and "launcher replaced by 1.2.1" in text)
     check("its file is the release's now", sha(MINE) == made["sha256"])
     check("the newer launcher is started in its place and goes no further",
-          "restart: the newer launcher is started" in text and "started by launcher 1.1.0 in its place" in text and
+          "restart: the newer launcher is started" in text and "started by launcher 1.2.0 in its place" in text and
           text.count("job: a newer launcher") == 1)
     st = states(text)
     check("the mod was not touched: ready on %s (%s)" % (MOD_VERSION, st[-1].split(" | ")[0]),

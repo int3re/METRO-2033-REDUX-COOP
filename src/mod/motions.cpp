@@ -276,7 +276,7 @@ uint8_t* on_start_motion(uint8_t* e, uint16_t motion, uint16_t part, float speed
   }
   // A joined game tells the host what its own script moved (a door its player's zone or use opened, which the
   // host's script may never come to): one-off motions only - an idle that plays on by itself is each PC's own.
-  if (mine && joined && in_session() && shared_thing(e) && !ambient(e, motion)) {
+  if (g_cfg.net_motions_back && mine && joined && in_session() && level_runs() && shared_thing(e) && !ambient(e, motion)) {
     std::lock_guard<std::mutex> hold(g_lock);
     bool again = prev_motion == motion && now - prev_tick > 5000;
     if (prev_motion != motion || again) {
@@ -391,6 +391,7 @@ bool play(const Note& n, uint64_t came) {
 void on_note(int from, const uint8_t* data, size_t size) {
   // a joined game plays the host's; the host plays a joined game's and passes it on to the others
   if (size < 1 || (my_slot() != 0 && from != 0) || (my_slot() == 0 && from < 1)) return;
+  if (my_slot() == 0 && !g_cfg.net_motions_back) return;  // (a 0.4.1 joined game still sends them: not taken)
   unsigned count = data[0];
   if (size < 1 + count * sizeof(Note)) return;
   uint64_t now = GetTickCount64();

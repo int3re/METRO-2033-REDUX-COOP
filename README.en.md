@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version 0.4.1" src="https://img.shields.io/badge/version-0.4.1-E07A1F">
+  <img alt="version 0.4.2" src="https://img.shields.io/badge/version-0.4.2-E07A1F">
   <img alt="state: trial build" src="https://img.shields.io/badge/state-trial%20build-8a2b1d">
   <img alt="Windows 10/11, 64-bit" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078d4">
   <img alt="tested: 2–3 players" src="https://img.shields.io/badge/tested-2–3%20players-4BCB3C">
@@ -102,13 +102,17 @@ LAUNCHER station). Building the mod from source - below.
   joined player stands beside the leading one on it, and takes the next seat in the car or on any other vehicle;
   doors, gates and whatever moves in the level move for the joined players as for the leading one (a door a story
   character opens too); crates, barrels and other loose things one player's physics moved lie the same for all.
+- **The menu and "use".** Esc in a session opens the normal pause menu, and the game goes on for the others. The
+  scene of a "use" (a wheel, a lever) is played only by the player who used it; the others see the thing move.
+  Print Screen puts the game's frame into the clipboard; the launcher has "window", "borderless" and "full screen".
 - **The story for all, the personal for oneself.** A zone of the level's script starts its scene for everybody
   when anybody walks in, while what the zone does to the player (the weapon lowered at a station, the gas mask and
   its filters, fire, a lift) happens only to the player who walked in. When a scene hides the leading player's
   weapon, the joined player puts theirs away too.
 - **Each player's own loot.** Everyone picks up for themselves: what one player took - ammunition, medkits,
   filters, a weapon from a stash - stays in place for the others until they take it. An enemy's weapon is one for
-  all: who takes it first has it.
+  all: who takes it first has it. A joined player's rounds and money (military rounds) stay their own at a level
+  change, after a death and in the next game, instead of becoming a copy of the leading player's.
 - **Level changes.** The leading player changes levels, the others follow by themselves and get new bodies.
 - **Wounded, not killed.** A player who would die falls badly wounded: crouches low, cannot walk or shoot and
   waits for a teammate, who holds Use next to them for three seconds to raise them; both see a caption and a bar of
@@ -151,6 +155,11 @@ leading player loading a checkpoint, leaving and coming back, three players.
 first-person hands, weapons in scenes, the seat on any vehicle, loose physics things, zones "the story for all,
 the personal for oneself", closing the game during the menu's intro video, joining beside a leader who has not
 walked yet. Each part has a switch in `metronet.ini` (see [dist/README.md](dist/README.md)).
+
+**The first game on 0.4.1 showed faults fixed in 0.4.2:** Esc opened a menu where nothing worked; doors and boxes
+opened for everybody at once; nobody could pick anything up (hiding another body's hands went through the server
+and took everybody's - that part is off); "use" pulled both players to the wheel; a joined player's death opened
+the death menu on the host. 0.4.2 is built without lab runs too.
 
 **Not sent between the players yet:** what story characters far from the leading player do and say when only the
 leader's script started their scene.

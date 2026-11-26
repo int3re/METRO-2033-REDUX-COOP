@@ -17,6 +17,7 @@ struct Values {
   bool friendly_fire = false;  // the players' bullets hurt each other
   std::wstring name;           // this player's name when Steam is not running
   std::wstring address;        // join: the host's IP address
+  bool borderless = false;     // the game in a window is shown without a frame over the whole monitor
 };
 
 // Reads metronet.ini of that folder (again: it may have been changed by hand).
@@ -33,6 +34,7 @@ std::wstring ini_file();
 bool set_mode(Mode m);
 bool set_names(bool on);
 bool set_friendly_fire(bool on);
+bool set_borderless(bool on);
 bool set_name(const std::wstring& name);
 bool set_address(const std::wstring& address);
 const std::wstring& error();
