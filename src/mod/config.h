@@ -20,7 +20,7 @@ struct Config {
   bool net_revive = true;        // [net] revive: a player who would die falls, a teammate raises them; the checkpoint
                                  // only when everybody is down (0: death as in single player)
   bool net_loot = true;          // [net] loot: what one player takes (ammunition, medkits, filters), every player gets
-  bool net_motions_back = false; // [net] motions_back: a joined game's own one-off motions go to the host too (0.4.1 had it
+  bool net_motions_back = true;  // [net] motions_back: a joined game's own one-off motions go to the host too (0.4.1 had it
                                  //   on: the motions its level load sets the doors and cabinets with went to the host, and
                                  //   every door and box stood open for everybody)
   bool net_motions = true;       // [net] motions: the host's things (doors a character opens, gates, levers) move alike
@@ -49,6 +49,10 @@ struct Config {
                                  // (0: the game's own 5 - 20 s, which a slow level load of the other PC runs over)
   bool net_friendly_fire = false;  // [net] friendly_fire: players' bullets hurt each other
   bool net_ride = true;            // [net] ride: a joined player sits beside the host on a rail vehicle (0: stays where it stands)
+  bool net_use_on_host = false;    // [net] use_on_host: the host plays a joined player's use too (0.4.3: off - the
+                                   //   use's scene went on by its own timers on the host and pulled the host's player)
+  bool net_use_on_joined = false;  // [net] use_on_joined: a joined game plays the others' uses too (0.4.2: off - the
+                                   //   host's use of a wheel ran its scene there and opened the door at once)
   bool net_use_scene_own = true;   // [net] use_scene: when another player's "use" is played here (the door opens here
                                    //   too), its scene (camera to the wheel, the hands' animation) stays theirs
   bool net_zone_own = true;        // [net] zone_own: what a zone does to the player where they stand (civil mode at a
@@ -66,6 +70,7 @@ struct Config {
   int lab_steam = 0;           // the lab's stand-in for Steam: this copy's number (1, 2, 3...), 0 = real Steam
   int lab_bind_port = -1;      // the UDP port the engine's socket takes instead of 1000 (0 = any), -1 = as is
   bool lab_autostart = true;   // a loaded map starts by itself (no "press any key")
+  bool lab_desk = false;       // [lab] desk: log what the main menu's desk script shows and opens
   int lab_fps = 30;            // the test copy draws no more frames a second than this (0 = as many as it can)
   int lab_cores = 4;           // ... and runs on this many processor cores only (0 = all), at a lowered priority
   // "seconds: command" steps, in order. "N:" = N seconds after the end of the engine's start-up, "+N:" = N

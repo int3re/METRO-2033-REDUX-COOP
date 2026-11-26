@@ -974,10 +974,10 @@ using AttachToFn = int64_t (*)(void**, void**, void**, const float*);
 AttachToFn g_attach_to = nullptr;
 
 int64_t on_attach_to(void** child, void** parent, void** bone, const float* offset) {
-  if (g_replaying_use && child && *child) {
-    uint8_t* own = controlled();
-    if (own && *reinterpret_cast<uint8_t**>(*child) == own + game::kEntityHandle) {
-      LOGI("net: another player's use would hang this PC's player on a thing: left out");
+  if (g_replaying_use && child && *child && *reinterpret_cast<uint8_t**>(*child)) {
+    uint8_t* e = *reinterpret_cast<uint8_t**>(*child) - game::kEntityHandle;
+    if (is_player(*reinterpret_cast<uint16_t*>(e + game::kEntityId))) {
+      LOGI("net: another player's use would hang a player's body on a thing: left out");
       return 0;
     }
   }
@@ -1298,8 +1298,20 @@ void on_use_key(int, const uint8_t* data, size_t size) {
   UseKeyNote note;
   if (size < sizeof(note)) return;
   memcpy(&note, data, sizeof(note));
-  if (game::ref<int>(game::kNetLocalPlayer) == 0 && link::peers() > 1) link::send(link::kUseKey, data, size, true);  // to the other joined games
+  if (g_cfg.net_use_on_joined && game::ref<int>(game::kNetLocalPlayer) == 0 && link::peers() > 1)
+    link::send(link::kUseKey, data, size, true);  // to the other joined games
   if (note.from == static_cast<uint8_t>(game::ref<int>(game::kNetLocalPlayer))) return;  // this PC's own use, come back round
+  // (0.4.2+: a joined game does not play anybody's use. The host's use of a wheel ran its scene on the joined PC too
+  // and opened the door there at once, while on the host the player still turned the wheel. What the use moves
+  // - the wheel, the door, a cabinet - comes to the joined games from the host's motions, when it moves there.)
+  if (!g_cfg.net_use_on_joined && game::ref<int>(game::kNetLocalPlayer) != 0) {
+    LOGI("net: player %d used a thing: left to the host's motions here", static_cast<int>(note.from));
+    return;
+  }
+  if (!g_cfg.net_use_on_host && game::ref<int>(game::kNetLocalPlayer) == 0) {  // (what it moves comes by its motions)
+    LOGI("net: player %d used a thing: what it moves comes by its motions", static_cast<int>(note.from));
+    return;
+  }
   uint8_t* chosen = nullptr;
   bool chosen_on = false;
   int candidates = 0;
@@ -1348,8 +1360,20 @@ void on_use(int, const uint8_t* data, size_t size) {
   UseNote note;
   if (size < sizeof(note)) return;
   memcpy(&note, data, sizeof(note));
-  if (game::ref<int>(game::kNetLocalPlayer) == 0 && link::peers() > 1) link::send(link::kUse, data, size, true);  // to the other joined games
+  if (g_cfg.net_use_on_joined && game::ref<int>(game::kNetLocalPlayer) == 0 && link::peers() > 1)
+    link::send(link::kUse, data, size, true);  // to the other joined games
   if (note.from == static_cast<uint8_t>(game::ref<int>(game::kNetLocalPlayer))) return;  // this PC's own use, come back round
+  // (0.4.2+: a joined game does not play anybody's use. The host's use of a wheel ran its scene on the joined PC too
+  // and opened the door there at once, while on the host the player still turned the wheel. What the use moves
+  // - the wheel, the door, a cabinet - comes to the joined games from the host's motions, when it moves there.)
+  if (!g_cfg.net_use_on_joined && game::ref<int>(game::kNetLocalPlayer) != 0) {
+    LOGI("net: player %d used a thing: left to the host's motions here", static_cast<int>(note.from));
+    return;
+  }
+  if (!g_cfg.net_use_on_host && game::ref<int>(game::kNetLocalPlayer) == 0) {  // (what it moves comes by its motions)
+    LOGI("net: player %d used a thing: what it moves comes by its motions", static_cast<int>(note.from));
+    return;
+  }
   if (note.count != g_use_blocks.size() || note.nth >= g_use_blocks.size() || !use_block_alive(g_use_blocks[note.nth])) {
     LOGW("net: player %d used a thing (use block %u of %u), but this PC's list has %zu: not fired here", static_cast<int>(note.from), note.nth,
          note.count, g_use_blocks.size());

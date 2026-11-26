@@ -100,6 +100,8 @@ bool load_config(const std::wstring& path, Config& cfg) {
   cfg.borderless = get_int(path, L"net", L"borderless", 0) != 0;
   cfg.net_zone_own = get_int(path, L"net", L"zone_own", 1) != 0;
   cfg.net_use_scene_own = get_int(path, L"net", L"use_scene", 1) != 0;
+  cfg.net_use_on_joined = get_int(path, L"net", L"use_on_joined", 0) != 0;
+  cfg.net_use_on_host = get_int(path, L"net", L"use_on_host", 0) != 0;
   cfg.net_actors = get_int(path, L"net", L"actors", 1) != 0;
   cfg.net_use = get_int(path, L"net", L"use", 1) != 0;
   cfg.net_missing_target = get_int(path, L"net", L"missing_target", 1) != 0;
@@ -107,10 +109,12 @@ bool load_config(const std::wstring& path, Config& cfg) {
   cfg.net_names = get_int(path, L"net", L"names", 1) != 0;
   cfg.net_revive = get_int(path, L"net", L"revive", 1) != 0;
   cfg.net_motions = get_int(path, L"net", L"motions", 1) != 0;
-  cfg.net_motions_back = get_int(path, L"net", L"motions_back", 0) != 0;
+  cfg.net_motions_back = get_int(path, L"net", L"motions_back2", 1) != 0;
   cfg.net_loot = get_int(path, L"net", L"loot", 1) != 0;
-  cfg.net_hide_hands = get_int(path, L"net", L"hide_hands", 0);
-  cfg.net_scene_hands = get_int(path, L"net", L"scene_hands", 0) != 0;
+  // (0.4.3: the keys of 0.4.1 - "hide_hands = 1", "scene_hands = 1" stayed in the players' metronet.ini - switch
+  // nothing on any more: both took a player's hands away and nothing could be used or opened)
+  cfg.net_hide_hands = get_int(path, L"net", L"hide_hands_lab", 0);
+  cfg.net_scene_hands = get_int(path, L"net", L"scene_hands_lab", 0) != 0;
   cfg.net_physics = get_int(path, L"net", L"physics", 1) != 0;
   cfg.net_own_gear = get_int(path, L"net", L"own_gear", 1) != 0;
   cfg.net_name = get_text(path, "net", "name");
@@ -125,6 +129,7 @@ bool load_config(const std::wstring& path, Config& cfg) {
   cfg.lab_bind_port = get_int(path, L"lab", L"bind_port", -1);
   cfg.lab_autostart = get_bool(path, L"lab", L"autostart", true);
   cfg.lab_fps = get_int(path, L"lab", L"fps", 30);
+  cfg.lab_desk = get_int(path, L"lab", L"desk", 0) != 0;
   cfg.lab_cores = get_int(path, L"lab", L"cores", 4);
   // script = 2: map 2033\l00_intro | 30: quit
   std::string script = get(path, L"lab", L"script", "");

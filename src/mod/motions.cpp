@@ -194,6 +194,25 @@ bool shared_thing(uint8_t* e) {
   return true;
 }
 
+// A thing this PC's own player moved (0.4.3): the level runs, the body has been in the game 10 s or more (what the
+// level's load and the first moment set is not news), and the thing is within 10 m of the body.
+uint8_t* g_body_seen = nullptr;
+uint64_t g_body_since = 0;
+
+bool near_own_body(uint8_t* e, uint64_t now) {
+  uint8_t* level = game::ref<uint8_t*>(game::kLevel);
+  uint8_t* own = level ? *reinterpret_cast<uint8_t**>(level + game::kLevelControlled) : nullptr;
+  if (own != g_body_seen) {
+    g_body_seen = own;
+    g_body_since = now;
+  }
+  if (!own || now - g_body_since < 10000) return false;
+  const float* a = reinterpret_cast<const float*>(own + game::kEntityPosition);
+  const float* b = reinterpret_cast<const float*>(e + game::kEntityPosition);
+  float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+  return dx * dx + dy * dy + dz * dz < 10.f * 10.f;
+}
+
 std::string chain(int skip, int count) {
   void* frames[16] = {};
   USHORT n = RtlCaptureStackBackTrace(skip, count, frames, nullptr);
@@ -276,7 +295,8 @@ uint8_t* on_start_motion(uint8_t* e, uint16_t motion, uint16_t part, float speed
   }
   // A joined game tells the host what its own script moved (a door its player's zone or use opened, which the
   // host's script may never come to): one-off motions only - an idle that plays on by itself is each PC's own.
-  if (g_cfg.net_motions_back && mine && joined && in_session() && level_runs() && shared_thing(e) && !ambient(e, motion)) {
+  if (g_cfg.net_motions_back && mine && joined && in_session() && level_runs() && shared_thing(e) && !ambient(e, motion) &&
+      near_own_body(e, now)) {
     std::lock_guard<std::mutex> hold(g_lock);
     bool again = prev_motion == motion && now - prev_tick > 5000;
     if (prev_motion != motion || again) {

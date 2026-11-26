@@ -1077,10 +1077,60 @@ DWORD WINAPI script_thread(LPVOID) {
 
 }  // namespace
 
+// --- the main menu's desk (lab): what its level script shows ("3D text", the tablet's "3d_leaderboard") and opens
+// ("show menu"), with the memory of each block, to find where an item of the mod's own can go.
+using DeskBlockFn = int64_t (*)(uint8_t*);
+DeskBlockFn g_text3d_on = nullptr, g_board3d_on = nullptr, g_show_menu_on = nullptr;
+int g_desk_told = 0;
+
+std::string str_text(const uint8_t* s) {
+  if (!s || IsBadReadPtr(s, 0x20)) return "";
+  uint16_t n = *reinterpret_cast<const uint16_t*>(s + 12);
+  if (n > 200 || IsBadReadPtr(s + 20, n)) return "?";
+  std::string out;
+  for (uint16_t i = 0; i < n; ++i) {
+    char c = static_cast<char>(s[20 + i]);
+    out += (c >= 32 && c < 127) ? c : '.';
+  }
+  return out;
+}
+
+void dump_desk_block(const char* what, uint8_t* b, size_t text_at) {
+  if (g_desk_told++ > 80 || !b) return;
+  const uint8_t* text = text_at ? *reinterpret_cast<uint8_t* const*>(b + text_at) : nullptr;
+  LOGI("lab: desk %s block %p class +%llX text@+%zX '%s'", what, static_cast<void*>(b),
+       static_cast<unsigned long long>(*reinterpret_cast<uintptr_t*>(b) - game::at(0)), text_at, str_text(text).c_str());
+  for (size_t off = 0x60; off < 0x1C0; off += 0x20) {
+    const uint64_t* q = reinterpret_cast<const uint64_t*>(b + off);
+    const float* f = reinterpret_cast<const float*>(b + off);
+    LOGI("lab:   +%03zX  %016llX %016llX %016llX %016llX | %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f", off,
+         static_cast<unsigned long long>(q[0]), static_cast<unsigned long long>(q[1]), static_cast<unsigned long long>(q[2]),
+         static_cast<unsigned long long>(q[3]), f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+  }
+}
+
+int64_t on_text3d(uint8_t* b) {
+  dump_desk_block("3D text", b, 136 + 32);
+  return g_text3d_on(b);
+}
+int64_t on_board3d(uint8_t* b) {
+  dump_desk_block("3d leaderboard", b, 136 + 32);
+  return g_board3d_on(b);
+}
+int64_t on_show_menu(uint8_t* b) {
+  if (b) LOGI("lab: desk show menu block %p: page '%s'", static_cast<void*>(b), str_text(*reinterpret_cast<uint8_t**>(b + 152)).c_str());
+  return g_show_menu_on(b);
+}
+
 void install(const Config& cfg) {
   g_cfg = cfg;
   if (!cfg.lab) return;
   LOGI("lab: test run (window off the screen, no input, own user folder '%ls')", cfg.lab_userdir.c_str());
+  if (cfg.lab_desk) {
+    patch::hook("lab: 3D text", game::at(0x6CA8F0), reinterpret_cast<void*>(&on_text3d), reinterpret_cast<void**>(&g_text3d_on));
+    patch::hook("lab: 3d leaderboard", game::at(0x6CA540), reinterpret_cast<void*>(&on_board3d), reinterpret_cast<void**>(&g_board3d_on));
+    patch::hook("lab: show menu", game::at(0x6C9C00), reinterpret_cast<void*>(&on_show_menu), reinterpret_cast<void**>(&g_show_menu_on));
+  }
   // out of the user's way: below-normal priority, a few cores only (each copy its own few where there is room)
   SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
   if (cfg.lab_cores > 0) {

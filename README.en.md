@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version 0.4.2" src="https://img.shields.io/badge/version-0.4.2-E07A1F">
+  <img alt="version 0.4.3" src="https://img.shields.io/badge/version-0.4.3-E07A1F">
   <img alt="state: trial build" src="https://img.shields.io/badge/state-trial%20build-8a2b1d">
   <img alt="Windows 10/11, 64-bit" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078d4">
   <img alt="tested: 2–3 players" src="https://img.shields.io/badge/tested-2–3%20players-4BCB3C">
